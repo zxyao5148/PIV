@@ -938,8 +938,7 @@ def train_iv_representation(
     so rows stay aligned with the canonical split ordering.
 
     Supported methods: ``PIV``, ``ZNet``, ``AutoIV``, ``VIV``, ``DIV.VAE``,
-    ``TrueIV`` (uses simulator ``C, V``), ``NoneIV`` (random noise), ``NoneIV2``
-    (simulator ``C``, random ``Z``).
+    ``TrueIV`` (uses simulator ``C, V``), and ``NoneIV`` (random noise).
     """
     eval_ld = (
         eval_loaders if eval_loaders is not None
@@ -1049,24 +1048,6 @@ def train_iv_representation(
         }
         ckpt = make_iv_checkpoint(method, args, seed, tens)
         return w_tr, z_tr, w_va, z_va, w_te, z_te, ckpt
-    if method == "NoneIV2":
-        n_tr = loaders.train.dataset.n
-        n_va = loaders.val.dataset.n
-        n_te = loaders.test.dataset.n
-        w_tr = tr["C"]
-        z_tr = torch.from_numpy(rng.standard_normal((n_tr, dims.z_dim)).astype(np.float32))
-        w_va = va["C"]
-        z_va = torch.from_numpy(rng.standard_normal((n_va, dims.z_dim)).astype(np.float32))
-        w_te = te["C"]
-        z_te = torch.from_numpy(rng.standard_normal((n_te, dims.z_dim)).astype(np.float32))
-        tens = {
-            "w_tr": w_tr.cpu().numpy(), "z_tr": z_tr.cpu().numpy(),
-            "w_va": w_va.cpu().numpy(), "z_va": z_va.cpu().numpy(),
-            "w_te": w_te.cpu().numpy(), "z_te": z_te.cpu().numpy(),
-        }
-        ckpt = make_iv_checkpoint(method, args, seed, tens)
-        return w_tr.cpu(), z_tr.cpu(), w_va.cpu(), z_va.cpu(), w_te.cpu(), z_te.cpu(), ckpt
-
     raise ValueError(f"Unknown method: {method}")
 
 
@@ -1142,7 +1123,7 @@ def load_iv_representation(
         c_te, z_te = extract_cz(model, eval_ld.test, device)[:2]
         return c_tr.cpu(), z_tr.cpu(), c_va.cpu(), z_va.cpu(), c_te.cpu(), z_te.cpu()
 
-    if method in ("TrueIV", "NoneIV", "NoneIV2"):
+    if method in ("TrueIV", "NoneIV"):
         p = ckpt["payload"]
         return (
             torch.from_numpy(np.asarray(p["w_tr"], dtype=np.float32)),

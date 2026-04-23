@@ -266,8 +266,10 @@ def representation_digest(w_tr: Tensor, z_tr: Tensor) -> str:
 def fingerprint_iv(args: argparse.Namespace, seed: int) -> dict:
     """Hyperparameter fingerprint for IV-representation checkpoints."""
     return {
-        # v4: ZNet/AutoIV/VIV/DIV.VAE optionally concat MLP(M) to C for W.
-        "version": 4,
+        # v6: PIV stage-2 removed the baseline branch entirely; the remaining
+        # treatment head consumes (Z, W, L) directly. Older IV checkpoints are
+        # architecturally incompatible and should not be reused.
+        "version": 6,
         "kind": "iv_repr",
         "seed": int(seed),
         "n": int(args.n),

@@ -324,7 +324,7 @@ def save_representation_probe_figure(
     seeds: list[int],
     *,
     filename: str = "demands_probe_r2.png",
-    exclude_methods: Sequence[str] = ("TrueIV", "NoneIV", "NoneIV2"),
+    exclude_methods: Sequence[str] = ("TrueIV", "NoneIV"),
 ) -> None:
     """Box plots of representation-probe :math:`R^2` across replicate seeds.
 
@@ -349,8 +349,7 @@ def save_representation_probe_figure(
     filename:
         Output filename placed under ``out_dir``.
     exclude_methods:
-        Methods omitted from this figure only (default: ``TrueIV``, ``NoneIV``,
-        ``NoneIV2``).
+        Methods omitted from this figure only (default: ``TrueIV``, ``NoneIV``).
         Probe metrics in the log are unchanged.
     """
     out_dir.mkdir(parents=True, exist_ok=True)

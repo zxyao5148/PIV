@@ -97,19 +97,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--oracle-c", action="store_true", dest="oracle_c")
 
     # ── DeepIV ──────────────────────────────────────────────────────
-    parser.add_argument("--deepiv-epochs", type=int, default=4000, dest="deepiv_epochs")
+    parser.add_argument("--deepiv-epochs", type=int, default=200, dest="deepiv_epochs")
     parser.add_argument("--deepiv-num-components", type=int, default=5, dest="deepiv_num_components")
-    parser.add_argument("--deepiv-treatment-hidden", type=int, default=256, dest="deepiv_treatment_hidden")
+    parser.add_argument("--deepiv-treatment-hidden", type=int, default=128, dest="deepiv_treatment_hidden")
     parser.add_argument("--deepiv-response-hidden", type=int, default=256, dest="deepiv_response_hidden")
     parser.add_argument("--deepiv-num-layers", type=int, default=2, dest="deepiv_num_layers")
     parser.add_argument("--deepiv-activation", type=str, default="relu", dest="deepiv_activation")
     parser.add_argument("--deepiv-dropout", type=float, default=0.0, dest="deepiv_dropout")
     parser.add_argument("--deepiv-num-samples", type=int, default=8, dest="deepiv_num_samples")
-    parser.add_argument("--deepiv-lr", type=float, default=1e-3, dest="deepiv_lr")
+    parser.add_argument("--deepiv-lr", type=float, default=5e-4, dest="deepiv_lr")
     parser.add_argument("--deepiv-weight-decay", type=float, default=1e-4, dest="deepiv_weight_decay")
-    parser.add_argument("--deepiv-min-scale", type=float, default=1e-3, dest="deepiv_min_scale")
+    parser.add_argument("--deepiv-min-scale", type=float, default=5e-3, dest="deepiv_min_scale")
     parser.add_argument("--deepiv-val-frac", type=float, default=0.1, dest="deepiv_val_frac")
-    parser.add_argument("--deepiv-patience", type=int, default=0, dest="deepiv_patience")
+    parser.add_argument("--deepiv-patience", type=int, default=50, dest="deepiv_patience")
 
     # ── DFIV ────────────────────────────────────────────────────────
     parser.add_argument("--dfiv-epochs", type=int, default=2000, dest="dfiv_epochs")

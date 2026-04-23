@@ -242,6 +242,19 @@ def train_probe_r2(
     if device is None:
         device = torch.device("cpu")
 
+    # Some learned reps (notably AutoIV) can vary wildly in scale across seeds.
+    # Z-scoring the probe inputs on the train split keeps the probe comparison
+    # focused on recoverable information rather than optimizer sensitivity.
+    input_train = input_train.to(torch.float32)
+    input_test = input_test.to(torch.float32)
+    target_train = target_train.to(torch.float32)
+    target_test = target_test.to(torch.float32)
+
+    in_mean = input_train.mean(dim=0, keepdim=True)
+    in_std = input_train.std(dim=0, keepdim=True).clamp_min(1e-6)
+    input_train = (input_train - in_mean) / in_std
+    input_test = (input_test - in_mean) / in_std
+
     in_dim = input_train.shape[1]
     out_dim = target_train.shape[1]
 

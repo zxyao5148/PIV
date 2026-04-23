@@ -24,8 +24,6 @@ class Stage1Output:
 class Stage2Output:
     w: Tensor
     z: Tensor
-    baseline: Tensor
-    modulation: Tensor
     prediction: Tensor
     logits: Optional[Tensor]
     loss: Tensor
@@ -103,33 +101,8 @@ class ProxyScoreHead(nn.Module):
         return self.net(torch.cat([w, m], dim=-1)).squeeze(-1)
 
 
-class BaselineHead(nn.Module):
-    """Stage-2 baseline b(w, l)."""
-
-    def __init__(
-        self,
-        w_dim: int,
-        l_dim: int,
-        a_dim: int,
-        hidden_dims: Sequence[int] = (128, 128),
-        activation: str = "relu",
-        dropout: float = 0.0,
-    ) -> None:
-        super().__init__()
-        self.net = MLP(
-            in_dim=w_dim + l_dim,
-            hidden_dims=hidden_dims,
-            out_dim=a_dim,
-            activation=activation,
-            dropout=dropout,
-        )
-
-    def forward(self, w: Tensor, l: Tensor) -> Tensor:
-        return self.net(torch.cat([w, l], dim=-1))
-
-
-class ResidualHead(nn.Module):
-    """Stage-2 modulation r(z, w, l)."""
+class TreatmentHead(nn.Module):
+    """Stage-2 treatment head t(z, w, l)."""
 
     def __init__(
         self,
@@ -249,17 +222,9 @@ class Stage2Model(nn.Module):
     """
     Stage-2 treatment prediction model.
 
-    The treatment head is baseline + modulation:
-        baseline = b(W, L)
-        modulation = r(Z, W, L)
-        prediction = baseline + modulation
-
     The same module supports:
     - continuous treatment: MSE
     - binary treatment: BCE with logits
-
-    For vector continuous treatment, the draft includes both the baseline-only loss
-    and the full prediction loss. `baseline_weight` lets you recover that behavior.
     """
 
     def __init__(
@@ -271,11 +236,9 @@ class Stage2Model(nn.Module):
         a_dim: int = 1,
         treatment_family: TreatmentFamily = "continuous",
         encoder_hidden_dims: Sequence[int] = (256, 256),
-        baseline_hidden_dims: Sequence[int] = (128, 128),
-        modulation_hidden_dims: Sequence[int] = (128, 128),
+        treatment_hidden_dims: Sequence[int] = (128, 128),
         activation: str = "relu",
         dropout: float = 0.0,
-        baseline_weight: float = 1.0,
         freeze_w_encoder: bool = True,
     ) -> None:
         super().__init__()
@@ -284,7 +247,6 @@ class Stage2Model(nn.Module):
 
         self.treatment_family = treatment_family
         self.a_dim = a_dim
-        self.baseline_weight = baseline_weight
         self.freeze_w_encoder = freeze_w_encoder
 
         self.w_encoder = MLP(
@@ -301,20 +263,12 @@ class Stage2Model(nn.Module):
             activation=activation,
             dropout=dropout,
         )
-        self.baseline_head = BaselineHead(
-            w_dim=w_dim,
-            l_dim=l_dim,
-            a_dim=a_dim,
-            hidden_dims=baseline_hidden_dims,
-            activation=activation,
-            dropout=dropout,
-        )
-        self.modulation_head = ResidualHead(
+        self.treatment_head = TreatmentHead(
             z_dim=z_dim,
             w_dim=w_dim,
             l_dim=l_dim,
             a_dim=a_dim,
-            hidden_dims=modulation_hidden_dims,
+            hidden_dims=treatment_hidden_dims,
             activation=activation,
             dropout=dropout,
         )
@@ -344,15 +298,11 @@ class Stage2Model(nn.Module):
         if w is None:
             w = self.encode_w(x)
         z = self.encode_z(x)
-        baseline = self.baseline_head(w, l)
-        modulation = self.modulation_head(z, w, l)
-        logits_or_mean = baseline + modulation
+        logits_or_mean = self.treatment_head(z, w, l)
 
         out: Dict[str, Tensor] = {
             "w": w,
             "z": z,
-            "baseline": baseline,
-            "modulation": modulation,
             "prediction": logits_or_mean,
         }
         if self.treatment_family == "binary":
@@ -369,7 +319,6 @@ class Stage2Model(nn.Module):
     ) -> Stage2Output:
         outputs = self.forward(x=x, l=l, w=w)
         prediction = outputs["prediction"]
-        baseline = outputs["baseline"]
         logits = outputs.get("logits")
 
         a = a.float()
@@ -377,37 +326,25 @@ class Stage2Model(nn.Module):
             a = a.unsqueeze(-1)
 
         if self.treatment_family == "continuous":
-            base_loss = F.mse_loss(baseline, a)
-            pred_loss = F.mse_loss(prediction, a)
-            loss = self.baseline_weight * base_loss + pred_loss
+            loss = F.mse_loss(prediction, a)
             metrics = {
                 "stage2_loss": loss.detach(),
-                "stage2_base_loss": base_loss.detach(),
-                "stage2_pred_loss": pred_loss.detach(),
-                "stage2_rmse": torch.sqrt(pred_loss.detach().clamp_min(1e-12)),
+                "stage2_pred_loss": loss.detach(),
+                "stage2_rmse": torch.sqrt(loss.detach().clamp_min(1e-12)),
             }
         else:
             if logits is None:
                 raise RuntimeError("Binary treatment requires logits.")
-            pred_loss = F.binary_cross_entropy_with_logits(logits, a)
-            if self.baseline_weight > 0.0:
-                base_loss = F.binary_cross_entropy_with_logits(baseline, a)
-                loss = self.baseline_weight * base_loss + pred_loss
-            else:
-                base_loss = torch.zeros((), device=a.device)
-                loss = pred_loss
+            loss = F.binary_cross_entropy_with_logits(logits, a)
             metrics = {
                 "stage2_loss": loss.detach(),
-                "stage2_base_loss": base_loss.detach(),
-                "stage2_pred_loss": pred_loss.detach(),
+                "stage2_pred_loss": loss.detach(),
                 "stage2_pred_mean": prediction.mean().detach(),
             }
 
         return Stage2Output(
             w=outputs["w"],
             z=outputs["z"],
-            baseline=baseline,
-            modulation=outputs["modulation"],
             prediction=prediction,
             logits=logits,
             loss=loss,
@@ -488,25 +425,22 @@ def build_proxyiv(
         a_dim=a_dim,
         treatment_family=treatment_family,
         encoder_hidden_dims=(256, 256),
-        baseline_hidden_dims=(128, 128),
-        modulation_hidden_dims=(128, 128),
+        treatment_hidden_dims=(128, 128),
         activation=activation,
-        baseline_weight=1.0 if treatment_family == "continuous" else 0.0,
         freeze_w_encoder=True,
     )
     return ProxyIVModel(stage1=stage1, stage2=stage2)
 
 
 __all__ = [
-    "BaselineHead",
     "MLP",
-    "ResidualHead",
     "ProxyScoreHead",
     "Stage1Model",
     "Stage1Output",
     "Stage2Model",
     "Stage2Output",
     "ProxyIVModel",
+    "TreatmentHead",
     "TreatmentFamily",
     "build_proxyiv",
 ]
