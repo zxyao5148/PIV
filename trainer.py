@@ -1215,12 +1215,12 @@ def load_npiv_checkpoint(
     w_tr: Tensor,
     z_tr: Tensor,
     *,
-    plots_only: bool = False,
+    test: bool = False,
 ) -> tuple[nn.Module, dict]:
     """Rebuild an NPIV model from disk and restore its normalisation stats.
 
     Verifies hyperparameter fingerprint; in training mode also verifies the
-    representation digest.  Under ``plots_only``, the digest check is skipped
+    representation digest.  Under ``test``, the digest check is skipped
     because ``(W, Z)`` are recomputed from a loaded IV net and small
     float/device nondeterminism can change the hash even when weights match.
     """
@@ -1229,7 +1229,7 @@ def load_npiv_checkpoint(
         raise ValueError("NPIV checkpoint fingerprint mismatch")
     dig = ckpt.get("representation_digest")
     if (
-        not plots_only
+        not test
         and dig is not None
         and dig != representation_digest(w_tr, z_tr)
     ):
@@ -1316,7 +1316,7 @@ def fit_npiv(
     iv_method: str = "",
     seed: int = 0,
     force_retrain: bool = False,
-    plots_only: bool = False,
+    test: bool = False,
 ) -> tuple[nn.Module, dict]:
     """Fit (or load) an NPIV model. Returns ``(model, norms)``.
 
@@ -1324,7 +1324,7 @@ def fit_npiv(
     ``w_tr, z_tr`` are the IV train representations (CPU tensors).  If
     ``checkpoint_path`` points to a matching file and ``force_retrain`` is
     false, the saved weights are loaded; otherwise training runs and the model
-    is saved.  ``plots_only=True`` forbids training — missing/bad checkpoints
+    is saved.  ``test=True`` forbids training — missing/bad checkpoints
     raise ``SystemExit``.
     """
     z_np = z_tr.numpy()
@@ -1347,17 +1347,17 @@ def fit_npiv(
         try:
             model, norms = load_npiv_checkpoint(
                 checkpoint_path, downstream, args, device, dims, seed, iv_method,
-                w_tr, z_tr, plots_only=plots_only,
+                w_tr, z_tr, test=test,
             )
             print(f"    [{downstream}] loaded NPIV checkpoint {checkpoint_path.name}")
             return model, norms
         except (ValueError, KeyError, RuntimeError) as e:
-            if plots_only:
+            if test:
                 raise SystemExit(
-                    f"plots-only: cannot load NPIV {checkpoint_path}: {e!r}",
+                    f"test: cannot load NPIV {checkpoint_path}: {e!r}",
                 ) from e
             print(f"    [{downstream}] NPIV checkpoint unusable ({e!r}) — retraining.")
-    elif plots_only:
+    elif test:
         raise SystemExit(
             f"plots-only: missing NPIV checkpoint (expected {checkpoint_path})",
         )

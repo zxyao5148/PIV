@@ -6,7 +6,7 @@ PYTHON_BIN="${PYTHON:-python}"
 LOG_DIR="${ROOT_DIR}/logs/run_demands"
 CHECKPOINT_DIR="${ROOT_DIR}/outputs/checkpoints/demands"
 OUT_FIG="${ROOT_DIR}/outputs/figs/demands"
-SEEDS_CSV="$(seq -s, 1 100)"
+SEEDS_CSV="$(seq -s, 1 20)"
 RHOS_CSV="0.5"
 GPU_IDS_CSV="1,2,3"
 SUM_RHO=""
@@ -197,6 +197,11 @@ SUM_ARGS=(
   --checkpoint-dir "${CHECKPOINT_DIR}"
   --out-fig "${OUT_FIG}"
 )
+if [[ -z "${SUM_RHO}" && -z "${SUM_RHO_LIST_CSV}" && "${#SUM_RHO_SEEDS[@]}" -eq 0 ]]; then
+  # Default summary scope to the same rhos we just trained so the
+  # aggregator always has an explicit rho selection.
+  SUM_RHO_LIST_CSV="${RHOS_CSV}"
+fi
 if [[ -n "${SUM_RHO}" ]]; then
   SUM_ARGS+=(--rho "${SUM_RHO}")
 fi

@@ -109,7 +109,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--deepiv-weight-decay", type=float, default=1e-4, dest="deepiv_weight_decay")
     parser.add_argument("--deepiv-min-scale", type=float, default=1e-3, dest="deepiv_min_scale")
     parser.add_argument("--deepiv-val-frac", type=float, default=0.1, dest="deepiv_val_frac")
-    parser.add_argument("--deepiv-patience", type=int, default=200, dest="deepiv_patience")
+    parser.add_argument("--deepiv-patience", type=int, default=0, dest="deepiv_patience")
 
     # ── DFIV ────────────────────────────────────────────────────────
     parser.add_argument("--dfiv-epochs", type=int, default=2000, dest="dfiv_epochs")
@@ -127,7 +127,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dfiv-batch-size", type=int, default=256, dest="dfiv_batch_size")
     parser.add_argument("--dfiv-weight-decay", type=float, default=1e-3, dest="dfiv_weight_decay")
     parser.add_argument("--dfiv-val-frac", type=float, default=0.1, dest="dfiv_val_frac")
-    parser.add_argument("--dfiv-patience", type=int, default=200, dest="dfiv_patience")
+    parser.add_argument("--dfiv-patience", type=int, default=0, dest="dfiv_patience")
 
     # ── Reporting ───────────────────────────────────────────────────
     parser.add_argument("--probe-epochs", type=int, default=200, dest="probe_epochs")
@@ -287,7 +287,7 @@ def execute_single_run(
                 iv_method=method,
                 seed=int(args.seed),
                 force_retrain=bool(args.force_retrain),
-                plots_only=False,
+                test=False,
             )
             tau_hat = hat_contrast_matrix(
                 model,

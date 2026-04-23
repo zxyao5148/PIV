@@ -382,7 +382,7 @@ def evaluate_seed_checkpoint_bundle(
                 iv_method=method,
                 seed=seed,
                 force_retrain=False,
-                plots_only=True,
+                test=True,
             )
             tau_hat = hat_contrast_matrix(
                 model,
