@@ -171,6 +171,16 @@ def build_npiv_checkpoint_path(
     )
 
 
+def demands_fingerprint_extra(args: argparse.Namespace) -> dict:
+    """Dataset-specific fingerprint fields for the demands benchmark."""
+    return {
+        "seed": int(args.seed),
+        "rho": float(args.rho),
+        "coef_eps_a": float(args.coef_eps_a),
+        "coef_u_outcome": float(args.coef_u_outcome),
+    }
+
+
 def load_or_train_iv(
     method: str,
     iv_ckpt_path: Path | None,
@@ -182,6 +192,7 @@ def load_or_train_iv(
     rng: np.random.Generator,
     *,
     allow_train: bool,
+    fingerprint_extra: dict | None = None,
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -203,6 +214,7 @@ def load_or_train_iv(
                 seed,
                 rng,
                 eval_loaders=eval_loaders,
+                fingerprint_extra=fingerprint_extra,
             )
             print(f"\n  [{method}] loaded IV checkpoint {iv_ckpt_path.name}")
             return w_tr, z_tr, w_va, z_va, w_te, z_te
@@ -226,6 +238,7 @@ def load_or_train_iv(
         rng,
         seed,
         eval_loaders=eval_loaders,
+        fingerprint_extra=fingerprint_extra,
     )
     if iv_ckpt_path is not None:
         iv_ckpt_path.parent.mkdir(parents=True, exist_ok=True)

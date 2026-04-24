@@ -1,0 +1,15 @@
+# Training
+epochs: 200
+lr: 0.005
+proxy_embed_dim: 4
+
+# Architecture
+hidden_dim: 64
+activation: relu
+
+# Loss weights
+t_hat_alpha: 1.0      # Z -> A treatment prediction
+c_y_corr_alpha: 1.0   # C correlates with Y (confounder objective)
+z_resid_alpha: 1.0    # Z correlates with Y - hat{Y}(X,A) residual
+cz_indep_alpha: 0.5   # C/Z independence penalty
+cy_mse_alpha: 1.0     # C + A -> Y MSE

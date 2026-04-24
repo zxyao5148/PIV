@@ -71,11 +71,16 @@ def train_stage1(
     epochs: int,
     lr: float,
     device: torch.device,
+    val_loader: DataLoader | None = None,
+    patience: int = 0,
     log_every: int = 20,
 ) -> None:
     """PIV stage-1: proxy-contrastive objective on ``(X, M)``."""
     opt = torch.optim.Adam(model.stage1.parameters(), lr=lr)
     model.stage1.train()
+    best_state: dict[str, Tensor] | None = None
+    best_val = float("inf")
+    bad_epochs = 0
     for ep in range(1, epochs + 1):
         epoch_loss = 0.0
         for batch in loader:
@@ -86,11 +91,41 @@ def train_stage1(
             out.loss.backward()
             opt.step()
             epoch_loss += out.loss.item() * x.shape[0]
+        val_msg = ""
+        if val_loader is not None:
+            model.stage1.eval()
+            val_loss = 0.0
+            with torch.no_grad():
+                for batch in val_loader:
+                    x = batch["X"].to(device)
+                    m = batch["M"].to(device)
+                    out = model.stage1_loss(x, m)
+                    val_loss += out.loss.item() * x.shape[0]
+            val_loss = val_loss / len(val_loader.dataset)
+            val_msg = f"  val_loss={val_loss:.4f}"
+            if val_loss < best_val - 1e-6:
+                best_val = val_loss
+                best_state = {
+                    name: value.detach().cpu().clone()
+                    for name, value in model.stage1.state_dict().items()
+                }
+                bad_epochs = 0
+            else:
+                bad_epochs += 1
+            model.stage1.train()
         if ep % log_every == 0 or ep == 1:
             print(
                 f"  Stage-1  epoch {ep:3d}/{epochs}  "
-                f"loss={epoch_loss / len(loader.dataset):.4f}",
+                f"loss={epoch_loss / len(loader.dataset):.4f}{val_msg}",
             )
+        if val_loader is not None and patience > 0 and bad_epochs >= patience:
+            print(
+                f"  Stage-1  early stop at epoch {ep} "
+                f"(best_val={best_val:.4f}, patience={patience})",
+            )
+            break
+    if best_state is not None:
+        model.stage1.load_state_dict(best_state)
 
 
 def train_stage2(
@@ -99,6 +134,8 @@ def train_stage2(
     epochs: int,
     lr: float,
     device: torch.device,
+    val_loader: DataLoader | None = None,
+    patience: int = 0,
     l_dim: int = 0,
     log_every: int = 20,
 ) -> None:
@@ -106,6 +143,9 @@ def train_stage2(
     trainable = [p for p in model.stage2.parameters() if p.requires_grad]
     opt = torch.optim.Adam(trainable, lr=lr)
     model.stage2.train()
+    best_state: dict[str, Tensor] | None = None
+    best_val = float("inf")
+    bad_epochs = 0
     for ep in range(1, epochs + 1):
         epoch_loss = 0.0
         for batch in loader:
@@ -117,11 +157,46 @@ def train_stage2(
             out.loss.backward()
             opt.step()
             epoch_loss += out.loss.item() * x.shape[0]
+        val_msg = ""
+        if val_loader is not None:
+            model.stage2.eval()
+            val_loss = 0.0
+            with torch.no_grad():
+                for batch in val_loader:
+                    x = batch["X"].to(device)
+                    a = batch["A"].to(device)
+                    l = (
+                        batch["L"].to(device)
+                        if "L" in batch
+                        else empty_covariates(x.shape[0], device)
+                    )
+                    out = model.stage2_loss(x, l, a)
+                    val_loss += out.loss.item() * x.shape[0]
+            val_loss = val_loss / len(val_loader.dataset)
+            val_msg = f"  val_loss={val_loss:.4f}"
+            if val_loss < best_val - 1e-6:
+                best_val = val_loss
+                best_state = {
+                    name: value.detach().cpu().clone()
+                    for name, value in model.stage2.state_dict().items()
+                }
+                bad_epochs = 0
+            else:
+                bad_epochs += 1
+            model.stage2.train()
         if ep % log_every == 0 or ep == 1:
             print(
                 f"  Stage-2  epoch {ep:3d}/{epochs}  "
-                f"loss={epoch_loss / len(loader.dataset):.4f}",
+                f"loss={epoch_loss / len(loader.dataset):.4f}{val_msg}",
             )
+        if val_loader is not None and patience > 0 and bad_epochs >= patience:
+            print(
+                f"  Stage-2  early stop at epoch {ep} "
+                f"(best_val={best_val:.4f}, patience={patience})",
+            )
+            break
+    if best_state is not None:
+        model.stage2.load_state_dict(best_state)
 
 
 def pretrain_znet_xty(
@@ -156,6 +231,7 @@ def train_baseline(
     device: torch.device,
     log_every: int = 20,
     label: str = "Baseline",
+    grad_clip: float = 0.0,
 ) -> None:
     """Generic training loop for models with a single ``compute_loss(x, a, y[, m])``.
 
@@ -178,8 +254,17 @@ def train_baseline(
                 out = model.compute_loss(x, a, y, m)
             else:
                 out = model.compute_loss(x, a, y)
+            if not torch.isfinite(out.loss):
+                raise RuntimeError(
+                    f"{label} produced non-finite loss at epoch {ep}",
+                )
             opt.zero_grad()
             out.loss.backward()
+            if grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(
+                    [p for p in model.parameters() if p.requires_grad],
+                    grad_clip,
+                )
             opt.step()
             epoch_loss += out.loss.item() * x.shape[0]
         if ep % log_every == 0 or ep == 1:
@@ -373,12 +458,19 @@ def train_deepiv(
     weights (noise-free early stopping without leaking training randomness).
     """
     rng = rng if rng is not None else np.random.default_rng(0)
-    a_mean = float(a.mean()); a_std = float(a.std()) + 1e-8
+    treatment_family = str(getattr(deepiv, "treatment_family", "continuous"))
+    if treatment_family == "binary":
+        a_mean = 0.0
+        a_std = 1.0
+        a_n = np.asarray(a, dtype=np.float32).reshape(-1)
+    else:
+        a_mean = float(a.mean())
+        a_std = float(a.std()) + 1e-8
+        a_n = ((a - a_mean) / a_std).astype(np.float32)
     y_mean = float(y.mean()); y_std = float(y.std()) + 1e-8
     w_mean, w_std, l_mean, l_std = wl_norm_stats(w, l, enabled=normalize_wl)
     z_mean = z.mean(axis=0); z_std = z.std(axis=0) + 1e-8
 
-    a_n = ((a - a_mean) / a_std).astype(np.float32)
     y_n = ((y - y_mean) / y_std).astype(np.float32)
     w_n = ((w - w_mean) / w_std).astype(np.float32)
     l_n = ((l - l_mean) / l_std).astype(np.float32)
@@ -411,7 +503,10 @@ def train_deepiv(
     train_ds = _ds(tr_idx)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     if has_external_val:
-        a_val_n = ((np.asarray(a_val_raw).reshape(-1) - a_mean) / a_std).astype(np.float32)
+        if treatment_family == "binary":
+            a_val_n = np.asarray(a_val_raw, dtype=np.float32).reshape(-1)
+        else:
+            a_val_n = ((np.asarray(a_val_raw).reshape(-1) - a_mean) / a_std).astype(np.float32)
         z_val_n = ((np.asarray(z_val_raw) - z_mean) / z_std).astype(np.float32)
         w_val_n = ((np.asarray(w_val_raw) - w_mean) / w_std).astype(np.float32)
         l_val_n = ((np.asarray(l_val_raw) - l_mean) / l_std).astype(np.float32)
@@ -589,12 +684,49 @@ def train_deepiv(
     for p in deepiv.treatment_net.parameters():
         p.requires_grad_(True)
 
+    @torch.no_grad()
+    def _collect_deepiv_preds(
+        a_eval: np.ndarray,
+        w_eval: np.ndarray,
+        l_eval: np.ndarray,
+        batch_size_eval: int = 2048,
+    ) -> np.ndarray:
+        preds: list[np.ndarray] = []
+        n_eval = int(np.asarray(a_eval).reshape(-1).shape[0])
+        for lo in range(0, n_eval, batch_size_eval):
+            hi = min(lo + batch_size_eval, n_eval)
+            a_b = torch.as_tensor(a_eval[lo:hi].reshape(-1, 1), dtype=torch.float32, device=device)
+            w_b = torch.as_tensor(w_eval[lo:hi], dtype=torch.float32, device=device)
+            l_b = torch.as_tensor(l_eval[lo:hi], dtype=torch.float32, device=device)
+            preds.append(deepiv.predict(a_b, w_b, l_b).detach().cpu().numpy().reshape(-1))
+        return np.concatenate(preds, axis=0) if preds else np.empty((0,), dtype=np.float32)
+
+    if has_external_val:
+        a_cal = a_val_n
+        w_cal = w_val_n
+        l_cal = l_val_n
+        y_cal = y_val_n.reshape(-1)
+    elif val_idx.size > 0:
+        a_cal = a_n[val_idx]
+        w_cal = w_n[val_idx]
+        l_cal = l_n[val_idx]
+        y_cal = y_n[val_idx].reshape(-1)
+    else:
+        a_cal = a_n
+        w_cal = w_n
+        l_cal = l_n
+        y_cal = y_n.reshape(-1)
+    y_cal_pred = _collect_deepiv_preds(a_cal, w_cal, l_cal)
+    y_cal_scale, y_cal_bias = _fit_affine_calibration(y_cal_pred, y_cal)
+
     return {
         "a_mean": a_mean, "a_std": a_std,
         "y_mean": y_mean, "y_std": y_std,
         "w_mean": w_mean.astype(np.float32), "w_std": w_std.astype(np.float32),
         "l_mean": l_mean.astype(np.float32), "l_std": l_std.astype(np.float32),
+        "y_cal_scale": y_cal_scale, "y_cal_bias": y_cal_bias,
         "normalize_wl": bool(normalize_wl),
+        "treatment_family": treatment_family,
     }
 
 
@@ -658,12 +790,18 @@ def train_dfiv(
     :func:`evaluation.predict_hat_a` work unchanged for both downstreams.
     """
     rng = rng if rng is not None else np.random.default_rng(0)
-    a_mean = float(a.mean()); a_std = float(a.std()) + 1e-8
+    treatment_family = str(getattr(model, "treatment_family", "continuous"))
+    if treatment_family == "binary":
+        a_mean = 0.0
+        a_std = 1.0
+        a_n = np.asarray(a, dtype=np.float32).reshape(-1)
+    else:
+        a_mean = float(a.mean()); a_std = float(a.std()) + 1e-8
+        a_n = ((a - a_mean) / a_std).astype(np.float32)
     y_mean = float(y.mean()); y_std = float(y.std()) + 1e-8
     w_mean, w_std, l_mean, l_std = wl_norm_stats(w, l, enabled=normalize_wl)
     z_mean = z.mean(axis=0); z_std = z.std(axis=0) + 1e-8
 
-    a_n = ((a - a_mean) / a_std).astype(np.float32)
     y_n = ((y - y_mean) / y_std).astype(np.float32)
     w_n = ((w - w_mean) / w_std).astype(np.float32)
     l_n = ((l - l_mean) / l_std).astype(np.float32)
@@ -687,13 +825,18 @@ def train_dfiv(
             tr_idx = perm
             val_idx = perm[:1]
 
-    half = tr_idx.size // 2
-    idx1, idx2 = tr_idx[:half], tr_idx[half:]
-    if idx1.size == 0 or idx2.size == 0:
-        idx1 = tr_idx[: max(1, tr_idx.size // 2)]
-        idx2 = tr_idx[max(1, tr_idx.size // 2):]
-    if idx2.size == 0:
-        idx2 = idx1.copy()
+    use_full_batch = not (batch_size and int(batch_size) > 0)
+    if use_full_batch:
+        idx1 = tr_idx.copy()
+        idx2 = tr_idx.copy()
+    else:
+        half = tr_idx.size // 2
+        idx1, idx2 = tr_idx[:half], tr_idx[half:]
+        if idx1.size == 0 or idx2.size == 0:
+            idx1 = tr_idx[: max(1, tr_idx.size // 2)]
+            idx2 = tr_idx[max(1, tr_idx.size // 2):]
+        if idx2.size == 0:
+            idx2 = idx1.copy()
 
     def _ds(idx: np.ndarray) -> TensorDataset:
         return TensorDataset(
@@ -704,7 +847,7 @@ def train_dfiv(
             torch.as_tensor(y_n[idx]),
         )
 
-    bs = int(batch_size) if batch_size and batch_size > 0 else half
+    bs = int(batch_size) if batch_size and batch_size > 0 else max(int(tr_idx.size), 1)
     loader1 = DataLoader(_ds(idx1), batch_size=bs, shuffle=True)
     loader2 = DataLoader(_ds(idx2), batch_size=bs, shuffle=True)
 
@@ -716,7 +859,11 @@ def train_dfiv(
 
     if has_external_val:
         a_val = torch.as_tensor(
-            ((np.asarray(a_val_raw).reshape(-1) - a_mean) / a_std).astype(np.float32),
+            (
+                np.asarray(a_val_raw, dtype=np.float32).reshape(-1)
+                if treatment_family == "binary"
+                else ((np.asarray(a_val_raw).reshape(-1) - a_mean) / a_std).astype(np.float32)
+            ),
             dtype=torch.float32,
             device=device,
         )
@@ -906,12 +1053,52 @@ def train_dfiv(
     y_full = torch.as_tensor(y_n, device=device)
     model.compute_final_mu(a_full, z_full, w_full, l_full, y_full)
 
+    @torch.no_grad()
+    def _collect_dfiv_preds(
+        a_eval: np.ndarray,
+        w_eval: np.ndarray,
+        l_eval: np.ndarray,
+        batch_size_eval: int = 2048,
+    ) -> np.ndarray:
+        preds: list[np.ndarray] = []
+        n_eval = int(np.asarray(a_eval).reshape(-1).shape[0])
+        for lo in range(0, n_eval, batch_size_eval):
+            hi = min(lo + batch_size_eval, n_eval)
+            a_b = torch.as_tensor(a_eval[lo:hi].reshape(-1, 1), dtype=torch.float32, device=device)
+            w_b = torch.as_tensor(w_eval[lo:hi], dtype=torch.float32, device=device)
+            l_b = torch.as_tensor(l_eval[lo:hi], dtype=torch.float32, device=device)
+            preds.append(model.predict(a_b, w_b, l_b).detach().cpu().numpy().reshape(-1))
+        return np.concatenate(preds, axis=0) if preds else np.empty((0,), dtype=np.float32)
+
+    if has_external_val:
+        if treatment_family == "binary":
+            a_cal = np.asarray(a_val_raw, dtype=np.float32).reshape(-1)
+        else:
+            a_cal = ((np.asarray(a_val_raw).reshape(-1) - a_mean) / a_std).astype(np.float32)
+        w_cal = ((np.asarray(w_val_raw) - w_mean) / w_std).astype(np.float32)
+        l_cal = ((np.asarray(l_val_raw) - l_mean) / l_std).astype(np.float32)
+        y_cal = ((np.asarray(y_val_raw).reshape(-1) - y_mean) / y_std).astype(np.float32)
+    elif val_idx.size > 0:
+        a_cal = a_n[val_idx]
+        w_cal = w_n[val_idx]
+        l_cal = l_n[val_idx]
+        y_cal = y_n[val_idx].reshape(-1)
+    else:
+        a_cal = a_n
+        w_cal = w_n
+        l_cal = l_n
+        y_cal = y_n.reshape(-1)
+    y_cal_pred = _collect_dfiv_preds(a_cal, w_cal, l_cal)
+    y_cal_scale, y_cal_bias = _fit_affine_calibration(y_cal_pred, y_cal)
+
     return {
         "a_mean": a_mean, "a_std": a_std,
         "y_mean": y_mean, "y_std": y_std,
         "w_mean": w_mean.astype(np.float32), "w_std": w_std.astype(np.float32),
         "l_mean": l_mean.astype(np.float32), "l_std": l_std.astype(np.float32),
+        "y_cal_scale": y_cal_scale, "y_cal_bias": y_cal_bias,
         "normalize_wl": bool(normalize_wl),
+        "treatment_family": treatment_family,
     }
 
 
@@ -930,6 +1117,7 @@ def train_iv_representation(
     seed: int,
     *,
     eval_loaders: DataLoaderBundle | None = None,
+    fingerprint_extra: dict | None = None,
 ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, dict]:
     """Train an IV representation method and return train/val/test reps + ckpt.
 
@@ -946,77 +1134,107 @@ def train_iv_representation(
     )
 
     if method == "PIV":
+        treatment_family = str(getattr(args, "treatment_type", "continuous"))
         piv = build_proxyiv(
             x_dim=dims.x_dim, m_dim=dims.m_dim, l_dim=dims.l_dim,
             w_dim=dims.w_dim, z_dim=dims.z_dim, a_dim=dims.a_dim,
-            treatment_family="continuous",
+            treatment_family=treatment_family,
         ).to(device)
-        train_stage1(piv, loaders.train, args.s1_epochs, args.lr, device)
+        train_stage1(
+            piv,
+            loaders.train,
+            args.s1_epochs,
+            args.lr,
+            device,
+            val_loader=eval_ld.val,
+            patience=int(getattr(args, "s1_patience", 0)),
+        )
         piv.copy_stage1_into_stage2(freeze=True)
-        train_stage2(piv, loaders.train, args.s2_epochs, args.lr, device, l_dim=dims.l_dim)
+        train_stage2(
+            piv,
+            loaders.train,
+            args.s2_epochs,
+            args.lr,
+            device,
+            val_loader=eval_ld.val,
+            patience=int(getattr(args, "s2_patience", 0)),
+            l_dim=dims.l_dim,
+        )
         w_tr, z_tr = extract_wz(piv, eval_ld.train, device)[:2]
         w_va, z_va = extract_wz(piv, eval_ld.val, device)[:2]
         w_te, z_te = extract_wz(piv, eval_ld.test, device)[:2]
-        ckpt = make_iv_checkpoint(method, args, seed, {"state_dict": piv.state_dict()})
+        ckpt = make_iv_checkpoint(method, args, seed, {"state_dict": piv.state_dict()}, fingerprint_extra=fingerprint_extra)
         return w_tr.cpu(), z_tr.cpu(), w_va.cpu(), z_va.cpu(), w_te.cpu(), z_te.cpu(), ckpt
 
     if method == "ZNet":
+        treatment_family = str(getattr(args, "treatment_type", "continuous"))
         znet = build_znet(
             x_dim=dims.x_dim, c_dim=dims.c_dim, z_dim=dims.z_dim, a_dim=dims.a_dim,
-            y_dim=dims.y_dim, treatment_family="continuous",
+            y_dim=dims.y_dim, treatment_family=treatment_family,
             **proxy_embed_kwargs(args, dims.m_dim),
         ).to(device)
         pretrain_znet_xty(znet, loaders.train, device, epochs=200, lr=args.lr)
         train_baseline(
-            znet, loaders.train, args.baseline_epochs, args.lr, device, label="ZNet",
+            znet, loaders.train, args.epochs, args.lr, device, label="ZNet",
         )
         c_tr, z_tr = extract_cz(znet, eval_ld.train, device)[:2]
         c_va, z_va = extract_cz(znet, eval_ld.val, device)[:2]
         c_te, z_te = extract_cz(znet, eval_ld.test, device)[:2]
-        ckpt = make_iv_checkpoint(method, args, seed, {"state_dict": znet.state_dict()})
+        ckpt = make_iv_checkpoint(method, args, seed, {"state_dict": znet.state_dict()}, fingerprint_extra=fingerprint_extra)
         return c_tr.cpu(), z_tr.cpu(), c_va.cpu(), z_va.cpu(), c_te.cpu(), z_te.cpu(), ckpt
 
     if method == "AutoIV":
+        treatment_family = str(getattr(args, "treatment_type", "continuous"))
         autoiv = build_autoiv(
             x_dim=dims.x_dim, rep_dim=dims.z_dim, a_dim=dims.a_dim,
-            y_dim=dims.y_dim, treatment_family="continuous",
+            y_dim=dims.y_dim, treatment_family=treatment_family,
             **proxy_embed_kwargs(args, dims.m_dim),
         ).to(device)
-        train_autoiv(autoiv, loaders.train, args.autoiv_epochs, args.lr, device)
+        train_autoiv(autoiv, loaders.train, args.epochs, args.lr, device)
         c_tr, z_tr = extract_cz(autoiv, eval_ld.train, device)[:2]
         c_va, z_va = extract_cz(autoiv, eval_ld.val, device)[:2]
         c_te, z_te = extract_cz(autoiv, eval_ld.test, device)[:2]
-        ckpt = make_iv_checkpoint(method, args, seed, {"state_dict": autoiv.state_dict()})
+        ckpt = make_iv_checkpoint(method, args, seed, {"state_dict": autoiv.state_dict()}, fingerprint_extra=fingerprint_extra)
         return c_tr.cpu(), z_tr.cpu(), c_va.cpu(), z_va.cpu(), c_te.cpu(), z_te.cpu(), ckpt
 
     if method == "VIV":
+        treatment_family = str(getattr(args, "treatment_type", "continuous"))
         viv = build_viv(
             x_dim=dims.x_dim, c_dim=dims.c_dim, z_dim=dims.z_dim, a_dim=dims.a_dim,
-            y_dim=dims.y_dim, treatment_family="continuous",
+            y_dim=dims.y_dim, treatment_family=treatment_family,
             **proxy_embed_kwargs(args, dims.m_dim),
         ).to(device)
         train_baseline(
-            viv, loaders.train, args.baseline_epochs, args.lr, device, label="VIV",
+            viv, loaders.train, args.epochs, args.lr, device, label="VIV",
         )
         c_tr, z_tr = extract_cz(viv, eval_ld.train, device)[:2]
         c_va, z_va = extract_cz(viv, eval_ld.val, device)[:2]
         c_te, z_te = extract_cz(viv, eval_ld.test, device)[:2]
-        ckpt = make_iv_checkpoint(method, args, seed, {"state_dict": viv.state_dict()})
+        ckpt = make_iv_checkpoint(method, args, seed, {"state_dict": viv.state_dict()}, fingerprint_extra=fingerprint_extra)
         return c_tr.cpu(), z_tr.cpu(), c_va.cpu(), z_va.cpu(), c_te.cpu(), z_te.cpu(), ckpt
 
     if method == "DIV.VAE":
+        treatment_family = str(getattr(args, "treatment_type", "continuous"))
         divvae = build_divvae(
             x_dim=dims.x_dim, c_dim=dims.c_dim, z_dim=dims.z_dim, a_dim=dims.a_dim,
-            y_dim=dims.y_dim, treatment_family="continuous",
+            y_dim=dims.y_dim, treatment_family=treatment_family,
             **proxy_embed_kwargs(args, dims.m_dim),
         ).to(device)
         train_baseline(
-            divvae, loaders.train, args.baseline_epochs, args.lr, device, label="DIV.VAE",
+            divvae,
+            loaders.train,
+            args.epochs,
+            min(float(args.lr), 1e-3),
+            device,
+            label="DIV.VAE",
+            grad_clip=5.0,
         )
         c_tr, z_tr = extract_cz(divvae, eval_ld.train, device)[:2]
         c_va, z_va = extract_cz(divvae, eval_ld.val, device)[:2]
         c_te, z_te = extract_cz(divvae, eval_ld.test, device)[:2]
-        ckpt = make_iv_checkpoint(method, args, seed, {"state_dict": divvae.state_dict()})
+        if not all(torch.isfinite(t).all() for t in (c_tr, z_tr, c_va, z_va, c_te, z_te)):
+            raise RuntimeError("DIV.VAE produced non-finite representations")
+        ckpt = make_iv_checkpoint(method, args, seed, {"state_dict": divvae.state_dict()}, fingerprint_extra=fingerprint_extra)
         return c_tr.cpu(), z_tr.cpu(), c_va.cpu(), z_va.cpu(), c_te.cpu(), z_te.cpu(), ckpt
 
     # ── Oracles / baselines that read keys straight from the simulator ──
@@ -1032,7 +1250,7 @@ def train_iv_representation(
             "w_va": w_va.cpu().numpy(), "z_va": z_va.cpu().numpy(),
             "w_te": w_te.cpu().numpy(), "z_te": z_te.cpu().numpy(),
         }
-        ckpt = make_iv_checkpoint(method, args, seed, tens)
+        ckpt = make_iv_checkpoint(method, args, seed, tens, fingerprint_extra=fingerprint_extra)
         return w_tr.cpu(), z_tr.cpu(), w_va.cpu(), z_va.cpu(), w_te.cpu(), z_te.cpu(), ckpt
     if method == "NoneIV":
         n_tr = loaders.train.dataset.n
@@ -1046,7 +1264,7 @@ def train_iv_representation(
             "w_va": w_va.numpy(), "z_va": z_va.numpy(),
             "w_te": w_te.numpy(), "z_te": z_te.numpy(),
         }
-        ckpt = make_iv_checkpoint(method, args, seed, tens)
+        ckpt = make_iv_checkpoint(method, args, seed, tens, fingerprint_extra=fingerprint_extra)
         return w_tr, z_tr, w_va, z_va, w_te, z_te, ckpt
     raise ValueError(f"Unknown method: {method}")
 
@@ -1062,6 +1280,7 @@ def load_iv_representation(
     rng: np.random.Generator,
     *,
     eval_loaders: DataLoaderBundle | None = None,
+    fingerprint_extra: dict | None = None,
 ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     """Restore train/val/test representations from disk; raise on mismatch.
 
@@ -1072,7 +1291,7 @@ def load_iv_representation(
     ckpt = load_checkpoint(path)
     if ckpt.get("method") != method:
         raise ValueError(f"checkpoint method {ckpt.get('method')!r} != {method!r}")
-    if ckpt.get("fingerprint") != fingerprint_iv(args, seed):
+    if ckpt.get("fingerprint") != fingerprint_iv(args, seed, extra=fingerprint_extra):
         raise ValueError("IV checkpoint fingerprint mismatch")
 
     eval_ld = (
@@ -1081,10 +1300,11 @@ def load_iv_representation(
     )
 
     if method == "PIV":
+        treatment_family = str(getattr(args, "treatment_type", "continuous"))
         piv = build_proxyiv(
             x_dim=dims.x_dim, m_dim=dims.m_dim, l_dim=dims.l_dim,
             w_dim=dims.w_dim, z_dim=dims.z_dim, a_dim=dims.a_dim,
-            treatment_family="continuous",
+            treatment_family=treatment_family,
         ).to(device)
         piv.load_state_dict(ckpt["payload"]["state_dict"])
         w_tr, z_tr = extract_wz(piv, eval_ld.train, device)[:2]
@@ -1093,28 +1313,29 @@ def load_iv_representation(
         return w_tr.cpu(), z_tr.cpu(), w_va.cpu(), z_va.cpu(), w_te.cpu(), z_te.cpu()
 
     if method in ("ZNet", "AutoIV", "VIV", "DIV.VAE"):
+        treatment_family = str(getattr(args, "treatment_type", "continuous"))
         if method == "ZNet":
             model = build_znet(
                 x_dim=dims.x_dim, c_dim=dims.c_dim, z_dim=dims.z_dim, a_dim=dims.a_dim,
-                y_dim=dims.y_dim, treatment_family="continuous",
+                y_dim=dims.y_dim, treatment_family=treatment_family,
                 **proxy_embed_kwargs(args, dims.m_dim),
             ).to(device)
         elif method == "AutoIV":
             model = build_autoiv(
                 x_dim=dims.x_dim, rep_dim=dims.z_dim, a_dim=dims.a_dim,
-                y_dim=dims.y_dim, treatment_family="continuous",
+                y_dim=dims.y_dim, treatment_family=treatment_family,
                 **proxy_embed_kwargs(args, dims.m_dim),
             ).to(device)
         elif method == "VIV":
             model = build_viv(
                 x_dim=dims.x_dim, c_dim=dims.c_dim, z_dim=dims.z_dim, a_dim=dims.a_dim,
-                y_dim=dims.y_dim, treatment_family="continuous",
+                y_dim=dims.y_dim, treatment_family=treatment_family,
                 **proxy_embed_kwargs(args, dims.m_dim),
             ).to(device)
         else:
             model = build_divvae(
                 x_dim=dims.x_dim, c_dim=dims.c_dim, z_dim=dims.z_dim, a_dim=dims.a_dim,
-                y_dim=dims.y_dim, treatment_family="continuous",
+                y_dim=dims.y_dim, treatment_family=treatment_family,
                 **proxy_embed_kwargs(args, dims.m_dim),
             ).to(device)
         model.load_state_dict(ckpt["payload"]["state_dict"])
@@ -1151,13 +1372,14 @@ def build_npiv_model(
     w_dim: int,
 ) -> nn.Module:
     """Construct the NPIV model for the requested downstream estimator."""
+    treatment_family = str(getattr(args, "treatment_type", "continuous"))
     if downstream == "deepiv":
         n_layers = max(1, int(args.deepiv_num_layers))
         treat_hidden = tuple([int(args.deepiv_treatment_hidden)] * n_layers)
         resp_hidden = tuple([int(args.deepiv_response_hidden)] * n_layers)
         return DeepIV(
             a_dim=dims.a_dim, z_dim=dims.z_dim, w_dim=w_dim, l_dim=dims.l_dim,
-            treatment_family="continuous",
+            treatment_family=treatment_family,
             num_components=int(args.deepiv_num_components),
             treatment_hidden_dims=treat_hidden,
             response_hidden_dims=resp_hidden,
@@ -1172,7 +1394,7 @@ def build_npiv_model(
         xi_hidden = tuple([int(args.dfiv_xi_hidden)] * n_layers)
         return DFIV(
             a_dim=dims.a_dim, z_dim=dims.z_dim, w_dim=w_dim, l_dim=dims.l_dim,
-            treatment_family="continuous",
+            treatment_family=treatment_family,
             feature_dim=int(args.dfiv_feature_dim),
             psi_hidden_dims=psi_hidden,
             phi_hidden_dims=phi_hidden,
@@ -1197,6 +1419,7 @@ def load_npiv_checkpoint(
     z_tr: Tensor,
     *,
     test: bool = False,
+    fingerprint_extra: dict | None = None,
 ) -> tuple[nn.Module, dict]:
     """Rebuild an NPIV model from disk and restore its normalisation stats.
 
@@ -1206,7 +1429,7 @@ def load_npiv_checkpoint(
     float/device nondeterminism can change the hash even when weights match.
     """
     ckpt = load_checkpoint(path)
-    if ckpt.get("fingerprint") != fingerprint_npiv(args, seed, iv_method, downstream):
+    if ckpt.get("fingerprint") != fingerprint_npiv(args, seed, iv_method, downstream, extra=fingerprint_extra):
         raise ValueError("NPIV checkpoint fingerprint mismatch")
     dig = ckpt.get("representation_digest")
     if (
@@ -1248,6 +1471,19 @@ def _seed_npiv_run(local_seed: int) -> None:
         torch.cuda.manual_seed_all(int(local_seed))
 
 
+def _fit_affine_calibration(pred: np.ndarray, target: np.ndarray) -> tuple[float, float]:
+    """Least-squares fit of ``target ≈ scale * pred + bias`` on 1D arrays."""
+    pred_1 = np.asarray(pred, dtype=np.float64).reshape(-1)
+    target_1 = np.asarray(target, dtype=np.float64).reshape(-1)
+    if pred_1.size != target_1.size or pred_1.size == 0:
+        return 1.0, 0.0
+    X = np.stack([pred_1, np.ones_like(pred_1)], axis=1)
+    coef, *_ = np.linalg.lstsq(X, target_1, rcond=None)
+    scale = float(coef[0]) if np.isfinite(coef[0]) else 1.0
+    bias = float(coef[1]) if np.isfinite(coef[1]) else 0.0
+    return scale, bias
+
+
 @torch.no_grad()
 def _npiv_train_mse(
     model: nn.Module,
@@ -1277,6 +1513,10 @@ def _npiv_train_mse(
         preds.append(pred_b)
 
     pred = np.concatenate(preds, axis=0)
+    pred = (
+        pred * float(norms.get("y_cal_scale", 1.0))
+        + float(norms.get("y_cal_bias", 0.0))
+    )
     pred = pred * float(norms["y_std"]) + float(norms["y_mean"])
     return float(np.mean((pred - y) ** 2))
 
@@ -1298,6 +1538,7 @@ def fit_npiv(
     seed: int = 0,
     force_retrain: bool = False,
     test: bool = False,
+    fingerprint_extra: dict | None = None,
 ) -> tuple[nn.Module, dict]:
     """Fit (or load) an NPIV model. Returns ``(model, norms)``.
 
@@ -1328,7 +1569,7 @@ def fit_npiv(
         try:
             model, norms = load_npiv_checkpoint(
                 checkpoint_path, downstream, args, device, dims, seed, iv_method,
-                w_tr, z_tr, test=test,
+                w_tr, z_tr, test=test, fingerprint_extra=fingerprint_extra,
             )
             print(f"    [{downstream}] loaded NPIV checkpoint {checkpoint_path.name}")
             return model, norms
@@ -1429,7 +1670,7 @@ def fit_npiv(
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(
             {
-                "fingerprint": fingerprint_npiv(args, seed, iv_method, downstream),
+                "fingerprint": fingerprint_npiv(args, seed, iv_method, downstream, extra=fingerprint_extra),
                 "downstream": downstream,
                 "state_dict": model.state_dict(),
                 "norms": norms,

@@ -1,0 +1,48 @@
+defaults:
+  npiv_restarts: 1
+  npiv_normalize_wl: true
+  deepiv_epochs: 180
+  deepiv_num_components: 5
+  deepiv_treatment_hidden: 192
+  deepiv_response_hidden: 384
+  deepiv_num_layers: 3
+  deepiv_activation: tanh
+  deepiv_dropout: 0.0
+  deepiv_num_samples: 16
+  deepiv_lr: 0.0003
+  deepiv_weight_decay: 0.0001
+  deepiv_min_scale: 0.005
+  deepiv_val_frac: 0.1
+  deepiv_patience: 45
+treatment_types:
+  binary:
+    deepiv_epochs: 220
+    deepiv_num_components: 1
+    deepiv_treatment_hidden: 128
+    deepiv_response_hidden: 256
+    deepiv_num_layers: 2
+    deepiv_activation: tanh
+    deepiv_num_samples: 16
+    deepiv_lr: 0.0005
+    deepiv_weight_decay: 0.00005
+    deepiv_val_frac: 0.1
+    deepiv_patience: 40
+surfaces:
+  poly:
+    deepiv_epochs: 240
+    deepiv_response_hidden: 512
+    deepiv_num_samples: 32
+    deepiv_patience: 60
+  tanh:
+    deepiv_treatment_hidden: 256
+    deepiv_response_hidden: 512
+  binary_linear:
+    deepiv_epochs: 320
+    deepiv_treatment_hidden: 192
+    deepiv_response_hidden: 384
+    deepiv_num_layers: 3
+    deepiv_patience: 60
+  binary_threshold_modulated:
+    deepiv_epochs: 300
+    deepiv_response_hidden: 384
+    deepiv_patience: 60

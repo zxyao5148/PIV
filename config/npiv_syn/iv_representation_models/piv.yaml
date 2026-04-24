@@ -1,0 +1,12 @@
+# Training
+s1_epochs: 80
+s2_epochs: 160
+s1_patience: 20
+s2_patience: 30
+lr: 0.0007
+
+# Architecture (Stage1 encoder, score head, Stage2 treatment head)
+encoder_hidden_dims: [256, 256]
+score_hidden_dims: [128, 128]
+treatment_hidden_dims: [128, 128]
+activation: relu

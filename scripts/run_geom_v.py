@@ -61,8 +61,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch_size", type=int, default=256)
     p.add_argument("--s1_epochs", type=int, default=100, help="PIV stage-1 epochs")
     p.add_argument("--s2_epochs", type=int, default=100, help="PIV stage-2 epochs")
-    p.add_argument("--baseline_epochs", type=int, default=200, help="baseline epochs")
-    p.add_argument("--autoiv_epochs", type=int, default=400, help="AutoIV epochs (original uses 1000)")
+    p.add_argument("--epochs", type=int, default=200, help="training epochs (ZNet/VIV/DIV.VAE/AutoIV)")
     p.add_argument("--probe_epochs", type=int, default=200, help="(C,Z)->V probe epochs")
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
@@ -106,7 +105,7 @@ def _run_znet(loaders, args, device):
     ).to(device)
 
     pretrain_znet_xty(znet, loaders.train, device, epochs=200, lr=args.lr)
-    train_baseline(znet, loaders.train, args.baseline_epochs, args.lr, device, label="ZNet")
+    train_baseline(znet, loaders.train, args.epochs, args.lr, device, label="ZNet")
 
     c_tr, z_tr, v_tr = extract_cz(znet, loaders.train, device, target_key="V")
     c_te, z_te, v_te = extract_cz(znet, loaders.test, device, target_key="V")
@@ -120,7 +119,7 @@ def _run_autoiv(loaders, args, device):
         y_dim=Y_DIM, treatment_family="continuous",
     ).to(device)
 
-    train_autoiv(autoiv, loaders.train, args.autoiv_epochs, args.lr, device)
+    train_autoiv(autoiv, loaders.train, args.epochs, args.lr, device)
 
     c_tr, z_tr, v_tr = extract_cz(autoiv, loaders.train, device, target_key="V")
     c_te, z_te, v_te = extract_cz(autoiv, loaders.test, device, target_key="V")
@@ -134,7 +133,7 @@ def _run_viv(loaders, args, device):
         y_dim=Y_DIM, treatment_family="continuous",
     ).to(device)
 
-    train_baseline(viv, loaders.train, args.baseline_epochs, args.lr, device, label="VIV")
+    train_baseline(viv, loaders.train, args.epochs, args.lr, device, label="VIV")
 
     c_tr, z_tr, v_tr = extract_cz(viv, loaders.train, device, target_key="V")
     c_te, z_te, v_te = extract_cz(viv, loaders.test, device, target_key="V")
@@ -162,7 +161,7 @@ def _run_divvae(loaders, args, device):
         y_dim=Y_DIM, treatment_family="continuous",
     ).to(device)
 
-    train_baseline(divvae, loaders.train, args.baseline_epochs, args.lr, device, label="DIV.VAE")
+    train_baseline(divvae, loaders.train, args.epochs, args.lr, device, label="DIV.VAE")
 
     c_tr, z_tr, v_tr = extract_cz(divvae, loaders.train, device, target_key="V")
     c_te, z_te, v_te = extract_cz(divvae, loaders.test, device, target_key="V")

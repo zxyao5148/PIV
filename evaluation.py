@@ -58,11 +58,19 @@ def predict_hat_a(
     """
     model.eval()
     n = w.shape[0]
-    a_norm = (a_val - norms["a_mean"]) / norms["a_std"]
+    treatment_family = str(norms.get("treatment_family", "continuous"))
+    if treatment_family == "binary":
+        a_norm = float(a_val)
+    else:
+        a_norm = (a_val - norms["a_mean"]) / norms["a_std"]
     a_tensor = torch.full((n, 1), a_norm, dtype=torch.float32, device=device)
     w_n = _norm_wl_tensor(w, norms["w_mean"], norms["w_std"], device)
     l_n = _norm_wl_tensor(l, norms["l_mean"], norms["l_std"], device)
     pred_norm = model.predict(a_tensor, w_n, l_n)
+    pred_norm = (
+        pred_norm * float(norms.get("y_cal_scale", 1.0))
+        + float(norms.get("y_cal_bias", 0.0))
+    )
     return (
         pred_norm.cpu().numpy().ravel() * norms["y_std"] + norms["y_mean"]
     ).astype(np.float64)
@@ -231,9 +239,13 @@ def train_probe_r2(
     target_test: Tensor,
     epochs: int = 200,
     lr: float = 1e-3,
-    hidden_dims: Sequence[int] = (128, 128),
+    hidden_dims: Sequence[int] = (256, 256),
     batch_size: int = 256,
     device: torch.device | None = None,
+    val_frac: float = 0.15,
+    patience: int = 20,
+    weight_decay: float = 1e-5,
+    min_delta: float = 1e-6,
 ) -> tuple[float, Tensor]:
     """Fit a small MLP probe on train data and return ``(test_r2, test_pred)``.
 
@@ -266,21 +278,63 @@ def train_probe_r2(
     layers.append(nn.Linear(prev, out_dim))
     probe = nn.Sequential(*layers).to(device)
 
-    opt = torch.optim.Adam(probe.parameters(), lr=lr)
+    opt = torch.optim.Adam(probe.parameters(), lr=lr, weight_decay=weight_decay)
+
+    n_train = int(input_train.shape[0])
+    if n_train < 2:
+        raise ValueError("train_probe_r2 requires at least 2 training rows.")
+    n_val = max(1, int(round(val_frac * n_train)))
+    if n_val >= n_train:
+        n_val = max(1, n_train // 5)
+    n_subtrain = n_train - n_val
+    if n_subtrain < 1:
+        n_subtrain = n_train - 1
+        n_val = 1
+
+    perm = torch.randperm(n_train)
+    tr_idx = perm[:n_subtrain]
+    va_idx = perm[n_subtrain:]
+    inp_subtrain = input_train[tr_idx]
+    tgt_subtrain = target_train[tr_idx]
+    inp_val = input_train[va_idx].to(device)
+    tgt_val = target_train[va_idx].to(device)
+
     loader = DataLoader(
-        TensorDataset(input_train, target_train),
+        TensorDataset(inp_subtrain, tgt_subtrain),
         batch_size=batch_size,
         shuffle=True,
     )
 
-    probe.train()
+    best_val = float("inf")
+    best_state: dict[str, Tensor] | None = None
+    bad_epochs = 0
+
     for _ in range(epochs):
+        probe.train()
         for inp_b, tgt_b in loader:
             inp_b, tgt_b = inp_b.to(device), tgt_b.to(device)
             loss = F.mse_loss(probe(inp_b), tgt_b)
             opt.zero_grad()
             loss.backward()
             opt.step()
+
+        probe.eval()
+        with torch.no_grad():
+            val_loss = F.mse_loss(probe(inp_val), tgt_val).item()
+        if val_loss < best_val - min_delta:
+            best_val = val_loss
+            best_state = {
+                name: value.detach().cpu().clone()
+                for name, value in probe.state_dict().items()
+            }
+            bad_epochs = 0
+        else:
+            bad_epochs += 1
+            if bad_epochs >= patience:
+                break
+
+    if best_state is not None:
+        probe.load_state_dict(best_state)
 
     probe.eval()
     with torch.no_grad():
@@ -325,6 +379,7 @@ def build_counterfactual_eval(
     l_pop: np.ndarray,
     h0_fn: Callable[[np.ndarray, np.ndarray], np.ndarray],
     *,
+    treatment_type: str = "continuous",
     a_ref_override: float | None = None,
     cf_a_pctl_low: float = 5.0,
     cf_a_pctl_high: float = 95.0,
@@ -376,17 +431,21 @@ def build_counterfactual_eval(
     if a_pop_1d.size == 0:
         raise ValueError("build_counterfactual_eval: a_pop is empty.")
 
-    a_ref = (
-        float(a_ref_override)
-        if a_ref_override is not None
-        else float(a_pop_1d.mean())
-    )
+    if str(treatment_type) == "binary":
+        a_ref = float(a_ref_override) if a_ref_override is not None else 0.0
+        a_grid = np.asarray([0.0, 1.0], dtype=np.float64)
+    else:
+        a_ref = (
+            float(a_ref_override)
+            if a_ref_override is not None
+            else float(a_pop_1d.mean())
+        )
 
-    lo = float(np.percentile(a_pop_1d, cf_a_pctl_low))
-    hi = float(np.percentile(a_pop_1d, cf_a_pctl_high))
-    if lo >= hi:
-        lo, hi = float(a_pop_1d.min()), float(a_pop_1d.max())
-    a_grid = np.linspace(lo, hi, int(cf_grid_n), dtype=np.float64)
+        lo = float(np.percentile(a_pop_1d, cf_a_pctl_low))
+        hi = float(np.percentile(a_pop_1d, cf_a_pctl_high))
+        if lo >= hi:
+            lo, hi = float(a_pop_1d.min()), float(a_pop_1d.max())
+        a_grid = np.linspace(lo, hi, int(cf_grid_n), dtype=np.float64)
 
     tau_pop_true = true_contrast_matrix(
         a_grid, a_ref, np.asarray(l_pop, dtype=np.float64), h0_fn,
@@ -404,7 +463,7 @@ def probe_wz_to_target_r2(
     *,
     epochs: int = 200,
     lr: float = 1e-3,
-    hidden_dims: Sequence[int] = (128, 128),
+    hidden_dims: Sequence[int] = (256, 256),
     batch_size: int = 256,
     device: torch.device | None = None,
 ) -> float:
@@ -428,6 +487,30 @@ def probe_wz_to_target_r2(
     return float(r2)
 
 
+def probe_w_to_target_r2(
+    w_tr: Tensor,
+    target_tr: Tensor,
+    w_te: Tensor,
+    target_te: Tensor,
+    *,
+    epochs: int = 200,
+    lr: float = 1e-3,
+    hidden_dims: Sequence[int] = (256, 256),
+    batch_size: int = 256,
+    device: torch.device | None = None,
+) -> float:
+    """MLP probe ``W → target``; returns test :math:`R^2`."""
+    r2, _ = train_probe_r2(
+        w_tr, target_tr, w_te, target_te,
+        epochs=epochs,
+        lr=lr,
+        hidden_dims=hidden_dims,
+        batch_size=batch_size,
+        device=device,
+    )
+    return float(r2)
+
+
 def probe_z_to_target_r2(
     z_tr: Tensor,
     target_tr: Tensor,
@@ -436,7 +519,7 @@ def probe_z_to_target_r2(
     *,
     epochs: int = 200,
     lr: float = 1e-3,
-    hidden_dims: Sequence[int] = (128, 128),
+    hidden_dims: Sequence[int] = (256, 256),
     batch_size: int = 256,
     device: torch.device | None = None,
 ) -> float:
@@ -458,6 +541,7 @@ __all__ = [
     "hat_contrast_matrix",
     "hat_contrast_surface",
     "predict_hat_a",
+    "probe_w_to_target_r2",
     "probe_wz_to_target_r2",
     "probe_z_to_target_r2",
     "r2_score",

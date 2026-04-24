@@ -50,11 +50,15 @@ class _GaussianEncoder(nn.Module):
         self.logvar_net = _MLP(in_dim, hidden_dims, latent_dim, activation)
 
     def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
-        return self.mu_net(x), self.logvar_net(x)
+        mu = self.mu_net(x)
+        # Clamp log-variance to keep the reparameterised latent scale finite.
+        logvar = self.logvar_net(x).clamp(min=-8.0, max=8.0)
+        return mu, logvar
 
     @staticmethod
     def reparameterise(mu: Tensor, logvar: Tensor) -> Tensor:
-        return mu + torch.randn_like(mu) * (0.5 * logvar).exp()
+        std = (0.5 * logvar).exp().clamp(max=10.0)
+        return mu + torch.randn_like(mu) * std
 
 
 def _cosine_similarity_mean(z: Tensor, c: Tensor) -> Tensor:
@@ -97,8 +101,8 @@ class DIVVAE(nn.Module):
         hidden_dim: int = 128,
         activation: str = "elu",
         kl_weight: float = 0.1,
-        alpha_a: float = 100.0,
-        alpha_y: float = 100.0,
+        alpha_a: float = 20.0,
+        alpha_y: float = 20.0,
         opr_weight: float = 1.0,
         use_proxy_embed: bool = False,
         m_dim: int = 1,

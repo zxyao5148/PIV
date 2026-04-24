@@ -13,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from config.model_configs import add_model_config_arguments, configured_model_args
 from evaluation import (
     contrast_mse,
     hat_contrast_matrix,
@@ -39,6 +40,7 @@ from scripts.demands.common import (
     build_eval_setup,
     build_iv_checkpoint_path,
     build_npiv_checkpoint_path,
+    demands_fingerprint_extra,
     demands_h0,
     discover_available_seeds,
     load_or_train_iv,
@@ -97,12 +99,6 @@ def parse_args() -> argparse.Namespace:
 
     # ── IV Representation Loading ──────────────────────────────────
     parser.add_argument("--batch_size", type=int, default=256)
-    parser.add_argument("--s1_epochs", type=int, default=200)
-    parser.add_argument("--s2_epochs", type=int, default=200)
-    parser.add_argument("--baseline_epochs", type=int, default=200)
-    parser.add_argument("--autoiv_epochs", type=int, default=400)
-    parser.add_argument("--lr", type=float, default=5e-3)
-    parser.add_argument("--proxy-embed-dim", type=int, default=4, dest="proxy_embed_dim")
     parser.add_argument(
         "--methods", nargs="+", default=["PIV", "TrueIV"],
         choices=ALL_METHODS, metavar="METHOD",
@@ -118,47 +114,12 @@ def parse_args() -> argparse.Namespace:
         "--downstream", nargs="+", default=["deepiv", "dfiv"],
         choices=["deepiv", "dfiv"],
     )
-    parser.add_argument("--deepiv-epochs", type=int, default=200, dest="deepiv_epochs")
-    parser.add_argument("--dfiv-epochs", type=int, default=1000, dest="dfiv_epochs")
-    parser.add_argument("--npiv-restarts", type=int, default=1, dest="npiv_restarts")
-    parser.add_argument(
-        "--npiv-normalize-wl",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        dest="npiv_normalize_wl",
-    )
     parser.add_argument("--oracle-c", action="store_true", dest="oracle_c")
-
-    # ── DeepIV ──────────────────────────────────────────────────────
-    parser.add_argument("--deepiv-num-components", type=int, default=5, dest="deepiv_num_components")
-    parser.add_argument("--deepiv-treatment-hidden", type=int, default=128, dest="deepiv_treatment_hidden")
-    parser.add_argument("--deepiv-response-hidden", type=int, default=256, dest="deepiv_response_hidden")
-    parser.add_argument("--deepiv-num-layers", type=int, default=2, dest="deepiv_num_layers")
-    parser.add_argument("--deepiv-activation", type=str, default="relu", dest="deepiv_activation")
-    parser.add_argument("--deepiv-dropout", type=float, default=0.0, dest="deepiv_dropout")
-    parser.add_argument("--deepiv-num-samples", type=int, default=8, dest="deepiv_num_samples")
-    parser.add_argument("--deepiv-lr", type=float, default=5e-4, dest="deepiv_lr")
-    parser.add_argument("--deepiv-weight-decay", type=float, default=1e-4, dest="deepiv_weight_decay")
-    parser.add_argument("--deepiv-min-scale", type=float, default=5e-3, dest="deepiv_min_scale")
-    parser.add_argument("--deepiv-val-frac", type=float, default=0.1, dest="deepiv_val_frac")
-    parser.add_argument("--deepiv-patience", type=int, default=50, dest="deepiv_patience")
-
-    # ── DFIV ────────────────────────────────────────────────────────
-    parser.add_argument("--dfiv-feature-dim", type=int, default=32, dest="dfiv_feature_dim")
-    parser.add_argument("--dfiv-psi-hidden", type=int, default=256, dest="dfiv_psi_hidden")
-    parser.add_argument("--dfiv-phi-hidden", type=int, default=256, dest="dfiv_phi_hidden")
-    parser.add_argument("--dfiv-xi-hidden", type=int, default=256, dest="dfiv_xi_hidden")
-    parser.add_argument("--dfiv-num-layers", type=int, default=2, dest="dfiv_num_layers")
-    parser.add_argument("--dfiv-activation", type=str, default="relu", dest="dfiv_activation")
-    parser.add_argument("--dfiv-dropout", type=float, default=0.0, dest="dfiv_dropout")
-    parser.add_argument("--dfiv-lambda1", type=float, default=0.1, dest="dfiv_lambda1")
-    parser.add_argument("--dfiv-lambda2", type=float, default=0.1, dest="dfiv_lambda2")
-    parser.add_argument("--dfiv-lr", type=float, default=5e-4, dest="dfiv_lr")
-    parser.add_argument("--dfiv-lr-phi", type=float, default=5e-5, dest="dfiv_lr_phi")
-    parser.add_argument("--dfiv-batch-size", type=int, default=256, dest="dfiv_batch_size")
-    parser.add_argument("--dfiv-weight-decay", type=float, default=1e-3, dest="dfiv_weight_decay")
-    parser.add_argument("--dfiv-val-frac", type=float, default=0.1, dest="dfiv_val_frac")
-    parser.add_argument("--dfiv-patience", type=int, default=50, dest="dfiv_patience")
+    add_model_config_arguments(
+        parser,
+        include_iv_representation=True,
+        include_npiv_estimators=True,
+    )
 
     # ── Aggregation And Figures ────────────────────────────────────
     parser.add_argument("--unit-plot-grid-index", type=int, default=-1, dest="unit_plot_grid_index")
@@ -258,8 +219,9 @@ def evaluate_seed_checkpoint_bundle(
     downstreams: list[str],
 ) -> dict[str, object]:
     """Load checkpoints for one `(seed, rho)` pair and compute evaluation objects."""
-    load_args = create_args_for_rho(args, rho)
-    _, loaders, eval_loaders = build_demands_loaders(load_args, seed=seed, rho=rho)
+    base_args = create_args_for_rho(args, rho)
+    base_args.seed = int(seed)
+    _, loaders, eval_loaders = build_demands_loaders(base_args, seed=seed, rho=rho)
     train_raw = collect_loader(eval_loaders.train, keys=["A", "Y", "L"])
     val_raw = collect_loader(eval_loaders.val, keys=["A", "Y", "L"])
     test_raw = collect_loader(eval_loaders.test, keys=["A", "Y", "L"])
@@ -290,6 +252,12 @@ def evaluate_seed_checkpoint_bundle(
     contrast_surface_store: dict[tuple[str, str], list[np.ndarray]] = {}
 
     for method in methods:
+        load_args = configured_model_args(
+            base_args,
+            dataset="demands",
+            iv_method=method,
+        )
+        fp_extra = demands_fingerprint_extra(load_args)
         iv_ckpt_path = build_iv_checkpoint_path(
             ckpt_root,
             seed=seed,
@@ -306,6 +274,7 @@ def evaluate_seed_checkpoint_bundle(
             seed,
             rng,
             allow_train=False,
+            fingerprint_extra=fp_extra,
         )
         if args.oracle_c and method != "PIV":
             assert (
@@ -324,7 +293,7 @@ def evaluate_seed_checkpoint_bundle(
         for target in args.probe_targets:
             tgt_tr = probe_train[target].to(torch.float32)
             tgt_te = probe_test[target].to(torch.float32)
-            if target == "V" and method != "PIV":
+            if target == "D" or (target == "V" and method != "PIV"):
                 r2 = probe_z_to_target_r2(
                     z_tr_t,
                     tgt_tr,
@@ -383,6 +352,7 @@ def evaluate_seed_checkpoint_bundle(
                 seed=seed,
                 force_retrain=False,
                 test=True,
+                fingerprint_extra=fp_extra,
             )
             tau_hat = hat_contrast_matrix(
                 model,
@@ -591,6 +561,7 @@ def render_rho_figure_set(
 
 def main() -> None:
     args = parse_args()
+    args.treatment_type = "continuous"
     ckpt_root = Path(args.checkpoint_dir).expanduser().resolve()
     if not ckpt_root.exists():
         raise SystemExit(

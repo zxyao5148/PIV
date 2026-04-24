@@ -169,9 +169,13 @@ def extract_cz(
         zs.append(model.encode_z(x).cpu())
         if target_key is not None:
             extras.append(batch[target_key])
+    c_all = torch.cat(cs)
+    z_all = torch.cat(zs)
+    if not torch.isfinite(c_all).all() or not torch.isfinite(z_all).all():
+        raise RuntimeError("Non-finite representations encountered in extract_cz")
     if target_key is not None:
-        return torch.cat(cs), torch.cat(zs), torch.cat(extras)
-    return torch.cat(cs), torch.cat(zs)
+        return c_all, z_all, torch.cat(extras)
+    return c_all, z_all
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -263,27 +267,35 @@ def representation_digest(w_tr: Tensor, z_tr: Tensor) -> str:
     return h.hexdigest()
 
 
-def fingerprint_iv(args: argparse.Namespace, seed: int) -> dict:
-    """Hyperparameter fingerprint for IV-representation checkpoints."""
-    return {
-        # v6: PIV stage-2 removed the baseline branch entirely; the remaining
-        # treatment head consumes (Z, W, L) directly. Older IV checkpoints are
-        # architecturally incompatible and should not be reused.
-        "version": 6,
+def fingerprint_iv(
+    args: argparse.Namespace,
+    seed: int,
+    *,
+    extra: dict | None = None,
+) -> dict:
+    """Hyperparameter fingerprint for IV-representation checkpoints.
+
+    Contains only model training hyperparameters common to all datasets.
+    Dataset-specific fields (e.g. rho, treatment_type) should be passed
+    via ``extra`` by the calling dataset script.
+    """
+    base = {
+        "version": 9,  # bumped: "seed" → "train_seed"; dataset seeds moved to fp_extra
         "kind": "iv_repr",
-        "seed": int(seed),
+        "train_seed": int(seed),
         "n": int(args.n),
-        "rho": float(args.rho),
-        "coef_eps_a": float(args.coef_eps_a),
-        "coef_u_outcome": float(args.coef_u_outcome),
-        "s1_epochs": int(args.s1_epochs),
-        "s2_epochs": int(args.s2_epochs),
-        "baseline_epochs": int(args.baseline_epochs),
-        "autoiv_epochs": int(args.autoiv_epochs),
-        "lr": float(args.lr),
+        "s1_epochs": int(getattr(args, "s1_epochs", 0) or 0),
+        "s2_epochs": int(getattr(args, "s2_epochs", 0) or 0),
+        "s1_patience": int(getattr(args, "s1_patience", 0) or 0),
+        "s2_patience": int(getattr(args, "s2_patience", 0) or 0),
+        "epochs": int(getattr(args, "epochs", 0) or 0),
+        "lr": float(getattr(args, "lr", 0.0) or 0.0),
         "batch_size": int(args.batch_size),
-        "proxy_embed_dim": int(args.proxy_embed_dim),
+        "proxy_embed_dim": int(getattr(args, "proxy_embed_dim", 0) or 0),
     }
+    if extra:
+        base.update(extra)
+    return base
 
 
 def fingerprint_npiv(
@@ -291,13 +303,15 @@ def fingerprint_npiv(
     seed: int,
     iv_method: str,
     downstream: str,
+    *,
+    extra: dict | None = None,
 ) -> dict:
     """Hyperparameter fingerprint for NPIV checkpoints.
 
     Extends :func:`fingerprint_iv` with NPIV-specific architecture and
     optimisation flags for the downstream estimators.
     """
-    fp = dict(fingerprint_iv(args, seed))
+    fp = dict(fingerprint_iv(args, seed, extra=extra))
     fp["kind"] = "npiv"
     fp["iv_method"] = iv_method
     fp["downstream"] = downstream
@@ -340,10 +354,19 @@ def fingerprint_npiv(
 
 
 def make_iv_checkpoint(
-    method: str, args: argparse.Namespace, seed: int, payload: dict,
+    method: str,
+    args: argparse.Namespace,
+    seed: int,
+    payload: dict,
+    *,
+    fingerprint_extra: dict | None = None,
 ) -> dict:
     """Build the canonical on-disk dict for an IV-representation checkpoint."""
-    return {"method": method, "fingerprint": fingerprint_iv(args, seed), "payload": payload}
+    return {
+        "method": method,
+        "fingerprint": fingerprint_iv(args, seed, extra=fingerprint_extra),
+        "payload": payload,
+    }
 
 
 def load_npiv_norms(raw: object) -> dict:

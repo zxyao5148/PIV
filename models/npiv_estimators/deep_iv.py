@@ -81,8 +81,7 @@ class StructuralResponseNet(nn.Module):
         )
 
     def forward(self, a: Tensor, w: Tensor, l: Tensor) -> Tensor:
-        a = _ensure_2d(a)
-        out = self.net(torch.cat([a, w, l], dim=-1))
+        out = self.net(torch.cat([_ensure_2d(a), w, l], dim=-1))
         return out.squeeze(-1) if self.y_dim == 1 else out
 
 

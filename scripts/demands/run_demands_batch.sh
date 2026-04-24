@@ -9,6 +9,8 @@ OUT_FIG="${ROOT_DIR}/outputs/figs/demands"
 SEEDS_CSV="$(seq -s, 1 20)"
 RHOS_CSV="0.5"
 GPU_IDS_CSV="1,2,3"
+WORKERS_PER_GPU=2
+DEVICE_MODE="auto"
 SUM_RHO=""
 SUM_RHO_LIST_CSV=""
 SUM_RHO_SEEDS=()
@@ -23,6 +25,8 @@ Options:
   --seeds CSV         Comma-separated seeds to run. Default: 1,2,...,100
   --rhos CSV          Comma-separated rho values to run. Default: 0.5
   --gpu-ids CSV       Physical CUDA GPU ids for training workers. Default: 1,2,3
+  --workers-per-gpu N Concurrent workers per GPU. Default: 2
+  --device MODE       `auto`, `cuda`, or `cpu`. Default: auto
   --log-dir PATH      Log directory. Default: logs/run_demands
   --checkpoint-dir P  Checkpoint directory. Default: outputs/checkpoints/demands
   --out-fig PATH      Aggregated figure directory. Default: outputs/figs/demands
@@ -55,6 +59,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --gpu-ids)
       GPU_IDS_CSV="$2"
+      shift 2
+      ;;
+    --workers-per-gpu)
+      WORKERS_PER_GPU="$2"
+      shift 2
+      ;;
+    --device)
+      DEVICE_MODE="$2"
       shift 2
       ;;
     --log-dir)
@@ -108,7 +120,23 @@ IFS=',' read -r -a GPU_IDS <<< "${GPU_IDS_CSV}"
 mkdir -p "${LOG_DIR}"
 mkdir -p "${CHECKPOINT_DIR}"
 
-if [[ "${#GPU_IDS[@]}" -eq 0 ]]; then
+resolve_device() {
+  local requested="$1"
+  if [[ "${requested}" == "cpu" || "${requested}" == "cuda" ]]; then
+    echo "${requested}"
+    return 0
+  fi
+  "${PYTHON_BIN}" - <<'PY'
+import torch
+print("cuda" if torch.cuda.is_available() else "cpu")
+PY
+}
+
+DEVICE="$(
+  resolve_device "${DEVICE_MODE}"
+)"
+
+if [[ "${DEVICE}" == "cuda" && "${#GPU_IDS[@]}" -eq 0 ]]; then
   echo "No GPU ids provided via --gpu-ids" >&2
   exit 1
 fi
@@ -152,7 +180,7 @@ PY
 }
 
 run_worker() {
-  local gpu_id="$1"
+  local gpu_id="${1:-}"
   local job
   local rho
   local seed
@@ -170,24 +198,41 @@ run_worker() {
     rho_tag="${rho//./p}"
     rho_tag="${rho_tag//-/m}"
     log_path="${LOG_DIR}/run_demands_rho${rho_tag}_seed${seed}.log"
-    echo "=== worker gpu=${gpu_id}: train_demands rho=${rho} seed=${seed} -> ${log_path}"
+    echo "=== worker device=${DEVICE}${gpu_id:+ gpu=${gpu_id}}: train_demands rho=${rho} seed=${seed} -> ${log_path}"
 
-    CUDA_VISIBLE_DEVICES="${gpu_id}" \
+    if [[ "${DEVICE}" == "cuda" ]]; then
+      CUDA_VISIBLE_DEVICES="${gpu_id}" \
+        "${PYTHON_BIN}" "${ROOT_DIR}/scripts/demands/train_demands.py" \
+        --seed "${seed}" \
+        --rho "${rho}" \
+        --checkpoint-dir "${CHECKPOINT_DIR}" \
+        "${RUN_ARGS[@]}" \
+        --device cuda \
+        2>&1 | tee "${log_path}"
+    else
       "${PYTHON_BIN}" "${ROOT_DIR}/scripts/demands/train_demands.py" \
-      --seed "${seed}" \
-      --rho "${rho}" \
-      --checkpoint-dir "${CHECKPOINT_DIR}" \
-      "${RUN_ARGS[@]}" \
-      --device cuda \
-      2>&1 | tee "${log_path}"
+        --seed "${seed}" \
+        --rho "${rho}" \
+        --checkpoint-dir "${CHECKPOINT_DIR}" \
+        "${RUN_ARGS[@]}" \
+        --device cpu \
+        2>&1 | tee "${log_path}"
+    fi
   done
 }
 
 WORKER_PIDS=()
-for gpu_id in "${GPU_IDS[@]}"; do
-  run_worker "${gpu_id}" &
+if [[ "${DEVICE}" == "cuda" ]]; then
+  for gpu_id in "${GPU_IDS[@]}"; do
+    for (( w=0; w<WORKERS_PER_GPU; w++ )); do
+      run_worker "${gpu_id}" &
+      WORKER_PIDS+=("$!")
+    done
+  done
+else
+  run_worker &
   WORKER_PIDS+=("$!")
-done
+fi
 
 for pid in "${WORKER_PIDS[@]}"; do
   wait "${pid}"
@@ -197,7 +242,11 @@ SUM_ARGS=(
   --checkpoint-dir "${CHECKPOINT_DIR}"
   --out-fig "${OUT_FIG}"
 )
-if [[ -z "${SUM_RHO}" && -z "${SUM_RHO_LIST_CSV}" && "${#SUM_RHO_SEEDS[@]}" -eq 0 ]]; then
+SUM_RHO_SEED_COUNT=0
+if [[ ${#SUM_RHO_SEEDS[@]:-} -gt 0 ]]; then
+  SUM_RHO_SEED_COUNT=${#SUM_RHO_SEEDS[@]}
+fi
+if [[ -z "${SUM_RHO}" && -z "${SUM_RHO_LIST_CSV}" && "${SUM_RHO_SEED_COUNT}" -eq 0 ]]; then
   # Default summary scope to the same rhos we just trained so the
   # aggregator always has an explicit rho selection.
   SUM_RHO_LIST_CSV="${RHOS_CSV}"
@@ -209,9 +258,11 @@ if [[ -n "${SUM_RHO_LIST_CSV}" ]]; then
   IFS=',' read -r -a SUM_RHO_LIST <<< "${SUM_RHO_LIST_CSV}"
   SUM_ARGS+=(--rho-list "${SUM_RHO_LIST[@]}")
 fi
-for spec in "${SUM_RHO_SEEDS[@]}"; do
-  SUM_ARGS+=(--rho-seeds "${spec}")
-done
+if [[ "${SUM_RHO_SEED_COUNT}" -gt 0 ]]; then
+  for spec in "${SUM_RHO_SEEDS[@]}"; do
+    SUM_ARGS+=(--rho-seeds "${spec}")
+  done
+fi
 SUM_ARGS+=("${RUN_ARGS[@]}")
 
 echo "=== test_demands -> ${OUT_FIG}"
