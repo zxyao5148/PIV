@@ -166,7 +166,7 @@ def build_npiv_syn_bundle(args: argparse.Namespace) -> dict[str, object]:
 def build_iv_checkpoint_path(
     ckpt_root: Path | None,
     *,
-    surface: str,
+    surface: str = "",
     treatment_type: str,
     design_seed: int,
     data_seed: int,
@@ -175,13 +175,16 @@ def build_iv_checkpoint_path(
     dA: int = 1,
     run_tag: str = "",
 ) -> Path | None:
-    """Canonical IV checkpoint path for one synthetic `(surface, seeds, method)`."""
+    """Canonical IV checkpoint path for one synthetic `(treatment_type, seeds, method)`.
+
+    Surface is excluded: treatment theta is now surface-independent so A and
+    the IV representation are shared across surfaces of the same treatment type.
+    """
     if ckpt_root is None:
         return None
     da_suffix = f"_dA{int(dA)}" if int(dA) > 1 else ""
     stem = (
-        f"surf_{surface}"
-        f"_{treatment_type}"
+        f"{treatment_type}"
         f"_design{int(design_seed)}"
         f"_data{int(data_seed)}"
         f"_train{int(train_seed)}"
@@ -384,7 +387,7 @@ def build_npiv_syn_eval_setup(
 def discover_available_train_seeds(
     ckpt_root: Path,
     *,
-    surface: str,
+    surface: str = "",  # accepted but ignored; IV checkpoints are surface-independent
     treatment_type: str,
     design_seed: int,
     data_seed: int,
@@ -393,13 +396,13 @@ def discover_available_train_seeds(
     """Find which train_seeds have at least one IV checkpoint for this scenario."""
     da_suffix = f"_dA{int(dA)}" if int(dA) > 1 else ""
     pattern = re.compile(
-        rf"^surf_{re.escape(surface)}_{re.escape(treatment_type)}"
+        rf"^{re.escape(treatment_type)}"
         rf"_design{int(design_seed)}_data{int(data_seed)}_train(\d+)_"
         rf".+{re.escape(da_suffix)}_iv\.pt$"
     )
     seeds: set[int] = set()
     prefix = (
-        f"surf_{surface}_{treatment_type}"
+        f"{treatment_type}"
         f"_design{int(design_seed)}_data{int(data_seed)}_train"
     )
     for path in ckpt_root.glob(f"{prefix}*_*_iv.pt"):

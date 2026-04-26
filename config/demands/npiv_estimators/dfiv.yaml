@@ -15,4 +15,4 @@ dfiv_lr_phi: 0.00005
 dfiv_batch_size: 256
 dfiv_weight_decay: 0.0005
 dfiv_val_frac: 0.1
-dfiv_patience: 120
+dfiv_patience: 160

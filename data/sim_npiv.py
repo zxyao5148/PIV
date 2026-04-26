@@ -317,6 +317,12 @@ def _common_design_seedseq(design_seed: int) -> SeedSequence:
     return SeedSequence([int(design_seed)])
 
 
+def _treatment_design_seedseq(design_seed: int, treatment_type: TreatmentType) -> SeedSequence:
+    """Seed for treatment theta — surface-independent so A is shared across surfaces."""
+    treatment_code = 0 if treatment_type == "continuous" else 1
+    return SeedSequence([int(design_seed), treatment_code])
+
+
 def _surface_design_seedseq(design_seed: int, surface: SurfaceType, treatment_type: TreatmentType) -> SeedSequence:
     treatment_code = 0 if treatment_type == "continuous" else 1
     return SeedSequence([int(design_seed), treatment_code, int(SURFACE_CODE[surface])])
@@ -721,9 +727,12 @@ def build_dgp_definition(design_seed: int, surface: SurfaceType, cfg: SimConfig,
     proxy_loading, proxy_attempt = sample_proxy_loading(proxy_ss, cfg)
     mixing = sample_mixing_coeffs(np.random.default_rng(mixing_ss), cfg)
 
-    surface_root = _surface_design_seedseq(design_seed, surface, treatment_type)
-    treat_ss, outcome_ss = surface_root.spawn(2)
+    treat_root = _treatment_design_seedseq(design_seed, treatment_type)
+    treat_ss, = treat_root.spawn(1)
     treat_theta = sample_treatment_theta_with_accept_reject(treat_ss, cfg, treatment_type=treatment_type)
+
+    surface_root = _surface_design_seedseq(design_seed, surface, treatment_type)
+    outcome_ss, = surface_root.spawn(1)
     outcome_theta = sample_outcome_theta(np.random.default_rng(outcome_ss), surface, treatment_type, cfg)
 
     return DGPDefinition(
