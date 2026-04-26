@@ -39,7 +39,7 @@ scalar:
       deepiv_response_hidden: 384
       deepiv_num_samples: 32
       deepiv_patience: 60
-    sinusoidal:
+    newey_powell:
       deepiv_epochs: 300
       deepiv_response_hidden: 384
       deepiv_num_samples: 32
@@ -90,7 +90,7 @@ vector:
     varying_slope:
       deepiv_epochs: 180
       deepiv_patience: 50
-    sinusoidal:
+    newey_powell:
       deepiv_epochs: 180
       deepiv_patience: 50
     binary_linear:

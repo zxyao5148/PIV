@@ -23,7 +23,6 @@ Options:
   --seeds CSV             Comma-separated seeds (used for both data_seed and train_seed).
                           Default: 1,2,3,4,5,6,7,8,9,10
   --treatment-types CSV   Comma-separated treatment types (continuous,binary). Default: both
-                          Continuous surfaces: poly, varying_slope, sinusoidal
   --da-values CSV         Comma-separated dA values. Default: 1
   --design-seed N         Fixed design seed. Default: 1
   --gpu-ids CSV           Physical CUDA GPU ids. Default: 0
@@ -85,7 +84,7 @@ IFS=',' read -r -a GPU_IDS <<< "${GPU_IDS_CSV}"
 
 get_surfaces_for_type() {
   case "$1" in
-    continuous) echo "poly varying_slope sinusoidal" ;;
+    continuous) echo "poly varying_slope newey_powell" ;;
     binary)     echo "binary_linear binary_threshold_modulated" ;;
     *)          echo "" ;;
   esac

@@ -42,7 +42,7 @@ scalar:
     varying_slope:
       dfiv_epochs: 300
       dfiv_patience: 60
-    sinusoidal:
+    newey_powell:
       dfiv_epochs: 300
       dfiv_patience: 60
     binary_linear:
@@ -104,7 +104,7 @@ vector:
     varying_slope:
       dfiv_epochs: 220
       dfiv_patience: 60
-    sinusoidal:
+    newey_powell:
       dfiv_epochs: 220
       dfiv_patience: 60
     binary_linear:

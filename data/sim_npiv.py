@@ -4,6 +4,18 @@ sim_npiv_with_vector_binary_coordU_joint_overlap.py
 Synthetic NPIV benchmark simulator for scalar/vector continuous treatment and
 scalar/vector binary treatment.
 
+Continuous-treatment surfaces include the classic Newey-Powell / Chen-Christensen
+benchmark. For scalar continuous treatment, the structural component is
+
+    h0(a) = log(|16a - 8| + 1) sign(a - 1/2),  a in [0, 1].
+
+For vector continuous treatment, this script uses an additive coordinate-wise
+extension with fixed treatment-coordinate coefficients,
+
+    dA^{-1/2} sum_j lambda_j h0(a_j),
+
+where lambda_j does not depend on L.
+
 This version adds a vector-binary joint-cell positivity / overlap diagnostic and
 optional accept-reject filter. For dA=2, the check is based on oracle
 conditional probabilities for all four treatment cells:
@@ -38,26 +50,27 @@ from numpy.random import Generator, SeedSequence
 
 
 TreatmentType = Literal["continuous", "binary"]
-ContinuousSurfaceType = Literal["poly", "varying_slope", "sinusoidal"]
+ContinuousSurfaceType = Literal["poly", "varying_slope", "newey_powell"]
 BinarySurfaceType = Literal["binary_linear", "binary_threshold_modulated"]
 SurfaceType = Literal[
     "poly",
     "varying_slope",
-    "sinusoidal",
+    "newey_powell",
     "binary_linear",
     "binary_threshold_modulated",
 ]
 
-CONTINUOUS_SURFACES = ["poly", "varying_slope", "sinusoidal"]
+CONTINUOUS_SURFACES = ["poly", "varying_slope", "newey_powell"]
 BINARY_SURFACES = ["binary_linear", "binary_threshold_modulated"]
 ALL_SURFACES = CONTINUOUS_SURFACES + BINARY_SURFACES
 
 SURFACE_CODE: Dict[str, int] = {
     "poly": 0,
+    # Keep the previous code for varying_slope to preserve design-seed behavior.
     "varying_slope": 3,
-    "sinusoidal": 6,
     "binary_linear": 4,
     "binary_threshold_modulated": 5,
+    "newey_powell": 6,
 }
 
 
@@ -122,9 +135,10 @@ class SimConfig:
     poly_beta_range: tuple[float, float] = (-1.0, 1.0)
     poly_quad_range: tuple[float, float] = (0.2, 1.0)
 
-    sin_amp_range: tuple[float, float] = (0.5, 2.0)
-    sin_freq_range: tuple[float, float] = (0.8, 1.5)
-    sin_gamma_range: tuple[float, float] = (-1.0, 1.0)
+    # Fixed treatment-coordinate coefficients for the vector Newey-Powell
+    # extension. The scalar dA=1 surface uses the canonical h0(a) without a
+    # random coefficient.
+    newey_powell_coef_range: tuple[float, float] = (0.75, 1.25)
 
     vslope_tau0_range: tuple[float, float] = (0.5, 2.0)
     vslope_tauL_range: tuple[float, float] = (-1.0, 1.0)
@@ -162,6 +176,10 @@ class SimConfig:
             raise ValueError("binary_min_joint_cell_prob_p05 must be in [0, 1].")
         if not (0.0 <= self.binary_max_joint_cell_prob_p95 <= 1.0):
             raise ValueError("binary_max_joint_cell_prob_p95 must be in [0, 1].")
+        if self.newey_powell_coef_range[0] > self.newey_powell_coef_range[1]:
+            raise ValueError("newey_powell_coef_range must have low <= high.")
+        if self.min_continuous_confound_ratio < 0.0:
+            raise ValueError("min_continuous_confound_ratio must be nonnegative.")
 
 
 @dataclass
@@ -235,6 +253,19 @@ def _normal_cdf_np(x: np.ndarray) -> np.ndarray:
     """Standard normal CDF using only stdlib math + NumPy."""
     erf_vec = np.vectorize(math.erf)
     return 0.5 * (1.0 + erf_vec(np.asarray(x, dtype=float) / np.sqrt(2.0)))
+
+
+def _newey_powell_h0(x: np.ndarray) -> np.ndarray:
+    """
+    Classic nonlinear NPIV structural function from Newey-Powell style
+    Monte Carlo designs:
+
+        h0(x) = log(|16x - 8| + 1) * sign(x - 1/2)
+
+    The intended support is x in [0, 1].
+    """
+    x = np.asarray(x, dtype=float)
+    return np.log(np.abs(16.0 * x - 8.0) + 1.0) * np.sign(x - 0.5)
 
 
 def _binary_joint_cell_probs_from_marginals_np(p: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -686,25 +717,6 @@ def sample_outcome_theta(rng: Generator, surface: SurfaceType, treatment_type: T
                 beta_a = _uniform_vec(rng, (cfg.dA,), *cfg.poly_beta_range)
                 q_raw = rng.uniform(-quad_scale, quad_scale, size=(cfg.dA, cfg.dA))
                 params = {"beta_a": beta_a, "Q": 0.5 * (q_raw + q_raw.T)}
-        elif surface == "sinusoidal":
-            # h0(A, L) = amp * sin(freq * A·w + L·gamma)
-            # w normalised so ||w||=1 for dA>1, scalar freq for dA=1.
-            # Gradient w.r.t. A is amp*freq*cos(...)*w — nonzero except at extrema.
-            if cfg.dA == 1:
-                params = {
-                    "amp": _scalar_uniform(rng, *cfg.sin_amp_range),
-                    "freq": _scalar_uniform(rng, *cfg.sin_freq_range),
-                    "gamma": _uniform_vec(rng, (cfg.dL,), *cfg.sin_gamma_range),
-                }
-            else:
-                w_raw = rng.normal(size=(cfg.dA,))
-                w_raw /= np.linalg.norm(w_raw) + 1e-8
-                params = {
-                    "amp": _scalar_uniform(rng, *cfg.sin_amp_range),
-                    "freq": _scalar_uniform(rng, *cfg.sin_freq_range),
-                    "w": w_raw,
-                    "gamma": _uniform_vec(rng, (cfg.dL,), *cfg.sin_gamma_range),
-                }
         elif surface == "varying_slope":
             if cfg.dA == 1:
                 params = {
@@ -716,6 +728,16 @@ def sample_outcome_theta(rng: Generator, surface: SurfaceType, treatment_type: T
                 params = {
                     "lam0": _uniform_vec(rng, (cfg.dA,), *cfg.vslope_lambda_range),
                     "lamL": _uniform_vec(rng, (cfg.dA, cfg.dL), *cfg.vslope_tauL_range),
+                }
+        elif surface == "newey_powell":
+            if cfg.dA == 1:
+                # Exact scalar benchmark h0(a); no random coefficient.
+                params = {}
+            else:
+                # Fixed coordinate coefficients, independent of L.
+                params = {
+                    "coef": _uniform_vec(rng, (cfg.dA,), *cfg.newey_powell_coef_range),
+                    "scale": 1.0 / math.sqrt(float(cfg.dA)),
                 }
         else:
             raise ValueError(f"Unknown continuous surface family: {surface}")
@@ -798,7 +820,13 @@ def sample_treatment(C: np.ndarray, V: np.ndarray, L: np.ndarray, U: np.ndarray,
         linear_index = tt.alpha0[None, :] + C @ tt.alphaC.T + L @ tt.alphaL.T + V @ tt.B.T + U * tt.gamma_u[None, :]
         if dgp.treatment_type == "continuous":
             eps_a = rng.normal(loc=0.0, scale=cfg.sigma_a, size=(C.shape[0], cfg.dA))
-            return np.asarray(linear_index + eps_a, dtype=float)
+            raw_a = np.asarray(linear_index + eps_a, dtype=float)
+            if dgp.surface == "newey_powell":
+                # The Newey-Powell benchmark is defined on [0, 1].
+                # Transforming the latent Gaussian first stage preserves
+                # endogeneity through U while bounding each A_j.
+                return _normal_cdf_np(raw_a)
+            return raw_a
         if dgp.treatment_type == "binary":
             eps_a = rng.normal(loc=0.0, scale=1.0, size=(C.shape[0], cfg.dA))
             return np.asarray((linear_index + eps_a >= 0.0).astype(float), dtype=float)
@@ -814,7 +842,11 @@ def sample_treatment(C: np.ndarray, V: np.ndarray, L: np.ndarray, U: np.ndarray,
     )
     if dgp.treatment_type == "continuous":
         eps_a = rng.normal(loc=0.0, scale=cfg.sigma_a, size=(C.shape[0], 1))
-        return (linear_index + eps_a).reshape(-1)
+        raw_a = linear_index + eps_a
+        if dgp.surface == "newey_powell":
+            # Bound scalar treatment to [0, 1] for the classic benchmark.
+            return _normal_cdf_np(raw_a).reshape(-1)
+        return raw_a.reshape(-1)
     if dgp.treatment_type == "binary":
         eps_a = rng.normal(loc=0.0, scale=1.0, size=(C.shape[0], 1))
         return ((linear_index + eps_a) >= 0.0).astype(float).reshape(-1)
@@ -823,12 +855,6 @@ def sample_treatment(C: np.ndarray, V: np.ndarray, L: np.ndarray, U: np.ndarray,
 
 def _baseline_response(L: np.ndarray, outcome_theta: OutcomeTheta) -> np.ndarray:
     return outcome_theta.mu0 + L @ outcome_theta.muL[:, None]
-
-
-def _threshold_effect(L: np.ndarray, outcome_theta: OutcomeTheta) -> np.ndarray:
-    tau0 = float(outcome_theta.params["tau0"])
-    tauL = np.asarray(outcome_theta.params["tauL"], dtype=float)
-    return tau0 + L @ tauL[:, None]
 
 
 def _varying_slope_effect(L: np.ndarray, outcome_theta: OutcomeTheta) -> np.ndarray:
@@ -872,16 +898,6 @@ def structural_response(A: np.ndarray | float, L: np.ndarray, dgp: DGPDefinition
                 linear = A_arr @ beta_a[:, None]
                 quad = np.einsum("ni,ij,nj->n", A_arr, Q, A_arr)[:, None]
                 val = baseline_response + linear + quad
-        elif outcome_theta.surface == "sinusoidal":
-            amp = float(outcome_theta.params["amp"])
-            freq = float(outcome_theta.params["freq"])
-            gamma = np.asarray(outcome_theta.params["gamma"], dtype=float)
-            if A_arr.shape[1] == 1:
-                phase = freq * A_arr + L @ gamma[:, None]
-            else:
-                w = np.asarray(outcome_theta.params["w"], dtype=float)
-                phase = freq * (A_arr @ w[:, None]) + L @ gamma[:, None]
-            val = baseline_response + amp * np.sin(phase)
         elif outcome_theta.surface == "varying_slope":
             if A_arr.shape[1] == 1 and "lam" in outcome_theta.params:
                 varying_slope = _varying_slope_effect(L, outcome_theta)
@@ -892,6 +908,21 @@ def structural_response(A: np.ndarray | float, L: np.ndarray, dgp: DGPDefinition
                 lamL = np.asarray(outcome_theta.params["lamL"], dtype=float)
                 slopes = lam0[None, :] + L @ lamL.T
                 val = baseline_response + np.sum(slopes * A_arr, axis=1, keepdims=True)
+        elif outcome_theta.surface == "newey_powell":
+            # h0 is defined on [0, 1]. The treatment sampler already maps
+            # newey_powell continuous treatments to [0, 1], but clipping keeps
+            # counterfactual calls and scalar inputs numerically safe.
+            x = np.clip(A_arr, 1e-8, 1.0 - 1e-8)
+            h_by_coord = _newey_powell_h0(x)
+            if A_arr.shape[1] == 1:
+                # Exact scalar Newey-Powell benchmark.
+                val = baseline_response + h_by_coord
+            else:
+                # Additive vector extension with fixed coordinate coefficients,
+                # independent of L: dA^{-1/2} sum_j lambda_j h0(A_j).
+                coef = np.asarray(outcome_theta.params["coef"], dtype=float)
+                scale = float(outcome_theta.params["scale"])
+                val = baseline_response + scale * np.sum(coef[None, :] * h_by_coord, axis=1, keepdims=True)
         else:
             raise ValueError(f"Unknown continuous surface family: {outcome_theta.surface}")
     else:
@@ -1009,6 +1040,8 @@ def summarize_dataset(data: SimulatedDataset, dgp: DGPDefinition, cfg: SimConfig
         "accepted_attempt_treat": int(dgp.treatment.accepted_attempt),
         "A_mean": float(np.mean(data.A)),
         "A_std": float(np.std(data.A)),
+        "A_min": float(np.min(data.A)),
+        "A_max": float(np.max(data.A)),
         "Y_mean": float(np.mean(data.Y)),
         "Y_std": float(np.std(data.Y)),
         "min_singular_value_Lambda_C": float(proxy_svals[-1]),
@@ -1034,6 +1067,22 @@ def summarize_dataset(data: SimulatedDataset, dgp: DGPDefinition, cfg: SimConfig
             "min_beta_norm_over_anchor_L": float(beta_norms.min()),
             "min_singular_value_S_beta": float(svals[-1]),
         })
+
+    if dgp.treatment_type == "continuous" and dgp.surface == "newey_powell":
+        if cfg.dA == 1:
+            summary.update({
+                "newey_powell_scalar_benchmark": True,
+                "newey_powell_h0": "log(|16a - 8| + 1) * sign(a - 1/2)",
+            })
+        else:
+            summary.update({
+                "newey_powell_scalar_benchmark": False,
+                "newey_powell_vector_extension": "dA^{-1/2} sum_j coef_j h0(A_j)",
+                "newey_powell_coef": [
+                    float(v) for v in np.asarray(dgp.outcome.params["coef"], dtype=float)
+                ],
+                "newey_powell_scale": float(dgp.outcome.params["scale"]),
+            })
 
     if dgp.treatment_type == "binary" and dgp.treatment.binary_accept_stats:
         if cfg.dA == 1:
@@ -1101,6 +1150,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sigma-m", type=float, default=0.30, help="Proxy noise scale.")
     parser.add_argument("--sigma-a", type=float, default=1.00, help="Continuous-treatment noise scale.")
     parser.add_argument("--sigma-y", type=float, default=1.00, help="Outcome noise scale.")
+    parser.add_argument(
+        "--min-continuous-confound-ratio",
+        type=float,
+        default=0.30,
+        help="Minimum latent first-stage U share for continuous treatment; set 0 to disable.",
+    )
+    parser.add_argument(
+        "--newey-powell-coef-low",
+        type=float,
+        default=0.75,
+        help="Lower bound for vector Newey-Powell fixed coordinate coefficients.",
+    )
+    parser.add_argument(
+        "--newey-powell-coef-high",
+        type=float,
+        default=1.25,
+        help="Upper bound for vector Newey-Powell fixed coordinate coefficients.",
+    )
 
     # Joint-cell overlap / positivity controls.
     parser.add_argument(
@@ -1151,6 +1218,8 @@ def main() -> None:
         sigma_a=args.sigma_a,
         sigma_y=args.sigma_y,
         max_treat_tries=args.max_treat_tries,
+        min_continuous_confound_ratio=args.min_continuous_confound_ratio,
+        newey_powell_coef_range=(args.newey_powell_coef_low, args.newey_powell_coef_high),
         binary_enable_joint_overlap_filter=not args.binary_disable_joint_overlap_filter,
         binary_min_joint_cell_prob_p01=args.binary_min_joint_cell_prob_p01,
         binary_min_joint_cell_prob_p05=args.binary_min_joint_cell_prob_p05,
