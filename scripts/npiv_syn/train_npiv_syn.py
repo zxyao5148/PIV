@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="poly",
         choices=[
-            "poly", "tanh", "thresh", "varying_slope",
+            "poly", "varying_slope", "sinusoidal",
             "binary_linear", "binary_threshold_modulated",
         ],
     )

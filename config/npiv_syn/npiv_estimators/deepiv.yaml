@@ -34,15 +34,12 @@ scalar:
       deepiv_response_hidden: 384
       deepiv_num_samples: 32
       deepiv_patience: 60
-    tanh:
+    varying_slope:
+      deepiv_epochs: 300
       deepiv_response_hidden: 384
-      deepiv_epochs: 250
       deepiv_num_samples: 32
       deepiv_patience: 60
-    thresh:
-      deepiv_epochs: 200
-      deepiv_patience: 40
-    varying_slope:
+    sinusoidal:
       deepiv_epochs: 300
       deepiv_response_hidden: 384
       deepiv_num_samples: 32
@@ -90,13 +87,10 @@ vector:
     poly:
       deepiv_epochs: 180
       deepiv_patience: 50
-    tanh:
-      deepiv_epochs: 180
-      deepiv_patience: 50
-    thresh:
-      deepiv_epochs: 180
-      deepiv_patience: 50
     varying_slope:
+      deepiv_epochs: 180
+      deepiv_patience: 50
+    sinusoidal:
       deepiv_epochs: 180
       deepiv_patience: 50
     binary_linear:

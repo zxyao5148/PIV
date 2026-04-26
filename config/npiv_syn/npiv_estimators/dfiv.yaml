@@ -39,13 +39,10 @@ scalar:
     poly:
       dfiv_epochs: 300
       dfiv_patience: 60
-    tanh:
-      dfiv_epochs: 260
-      dfiv_patience: 60
-    thresh:
-      dfiv_epochs: 240
-      dfiv_patience: 50
     varying_slope:
+      dfiv_epochs: 300
+      dfiv_patience: 60
+    sinusoidal:
       dfiv_epochs: 300
       dfiv_patience: 60
     binary_linear:
@@ -104,15 +101,12 @@ vector:
     poly:
       dfiv_epochs: 220
       dfiv_patience: 60
-    tanh:
+    varying_slope:
       dfiv_epochs: 220
       dfiv_patience: 60
-    thresh:
-      dfiv_epochs: 60
-      dfiv_patience: 20
-    varying_slope:
-      dfiv_epochs: 60
-      dfiv_patience: 20
+    sinusoidal:
+      dfiv_epochs: 220
+      dfiv_patience: 60
     binary_linear:
       dfiv_epochs: 120
       dfiv_patience: 30

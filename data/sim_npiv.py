@@ -38,26 +38,24 @@ from numpy.random import Generator, SeedSequence
 
 
 TreatmentType = Literal["continuous", "binary"]
-ContinuousSurfaceType = Literal["poly", "tanh", "thresh", "varying_slope"]
+ContinuousSurfaceType = Literal["poly", "varying_slope", "sinusoidal"]
 BinarySurfaceType = Literal["binary_linear", "binary_threshold_modulated"]
 SurfaceType = Literal[
     "poly",
-    "tanh",
-    "thresh",
     "varying_slope",
+    "sinusoidal",
     "binary_linear",
     "binary_threshold_modulated",
 ]
 
-CONTINUOUS_SURFACES = ["poly", "tanh", "thresh", "varying_slope"]
+CONTINUOUS_SURFACES = ["poly", "varying_slope", "sinusoidal"]
 BINARY_SURFACES = ["binary_linear", "binary_threshold_modulated"]
 ALL_SURFACES = CONTINUOUS_SURFACES + BINARY_SURFACES
 
 SURFACE_CODE: Dict[str, int] = {
     "poly": 0,
-    "tanh": 1,
-    "thresh": 2,
     "varying_slope": 3,
+    "sinusoidal": 6,
     "binary_linear": 4,
     "binary_threshold_modulated": 5,
 }
@@ -124,13 +122,9 @@ class SimConfig:
     poly_beta_range: tuple[float, float] = (-1.0, 1.0)
     poly_quad_range: tuple[float, float] = (0.2, 1.0)
 
-    tanh_amp_range: tuple[float, float] = (0.5, 2.0)
-    tanh_slope_range: tuple[float, float] = (0.5, 2.0)
-    tanh_gamma_range: tuple[float, float] = (-1.0, 1.0)
-
-    thresh_tau0_range: tuple[float, float] = (0.5, 2.0)
-    thresh_tauL_range: tuple[float, float] = (-1.0, 1.0)
-    thresh_w_range: tuple[float, float] = (0.5, 2.0)
+    sin_amp_range: tuple[float, float] = (0.5, 2.0)
+    sin_freq_range: tuple[float, float] = (0.8, 1.5)
+    sin_gamma_range: tuple[float, float] = (-1.0, 1.0)
 
     vslope_tau0_range: tuple[float, float] = (0.5, 2.0)
     vslope_tauL_range: tuple[float, float] = (-1.0, 1.0)
@@ -692,31 +686,24 @@ def sample_outcome_theta(rng: Generator, surface: SurfaceType, treatment_type: T
                 beta_a = _uniform_vec(rng, (cfg.dA,), *cfg.poly_beta_range)
                 q_raw = rng.uniform(-quad_scale, quad_scale, size=(cfg.dA, cfg.dA))
                 params = {"beta_a": beta_a, "Q": 0.5 * (q_raw + q_raw.T)}
-        elif surface == "tanh":
+        elif surface == "sinusoidal":
+            # h0(A, L) = amp * sin(freq * A·w + L·gamma)
+            # w normalised so ||w||=1 for dA>1, scalar freq for dA=1.
+            # Gradient w.r.t. A is amp*freq*cos(...)*w — nonzero except at extrema.
             if cfg.dA == 1:
                 params = {
-                    "amp": _scalar_uniform(rng, *cfg.tanh_amp_range),
-                    "slope": _scalar_uniform(rng, *cfg.tanh_slope_range),
-                    "gamma": _uniform_vec(rng, (cfg.dL,), *cfg.tanh_gamma_range),
+                    "amp": _scalar_uniform(rng, *cfg.sin_amp_range),
+                    "freq": _scalar_uniform(rng, *cfg.sin_freq_range),
+                    "gamma": _uniform_vec(rng, (cfg.dL,), *cfg.sin_gamma_range),
                 }
             else:
+                w_raw = rng.normal(size=(cfg.dA,))
+                w_raw /= np.linalg.norm(w_raw) + 1e-8
                 params = {
-                    "amp": _scalar_uniform(rng, *cfg.tanh_amp_range),
-                    "w": _uniform_vec(rng, (cfg.dA,), *cfg.tanh_slope_range),
-                    "gamma": _uniform_vec(rng, (cfg.dL,), *cfg.tanh_gamma_range),
-                }
-        elif surface == "thresh":
-            if cfg.dA == 1:
-                params = {
-                    "tau0": _scalar_uniform(rng, *cfg.thresh_tau0_range),
-                    "tauL": _uniform_vec(rng, (cfg.dL,), *cfg.thresh_tauL_range),
-                    "w": _scalar_uniform(rng, *cfg.thresh_w_range),
-                }
-            else:
-                params = {
-                    "tau0": _scalar_uniform(rng, *cfg.thresh_tau0_range),
-                    "tauL": _uniform_vec(rng, (cfg.dL,), *cfg.thresh_tauL_range),
-                    "w": _uniform_vec(rng, (cfg.dA,), *cfg.thresh_w_range),
+                    "amp": _scalar_uniform(rng, *cfg.sin_amp_range),
+                    "freq": _scalar_uniform(rng, *cfg.sin_freq_range),
+                    "w": w_raw,
+                    "gamma": _uniform_vec(rng, (cfg.dL,), *cfg.sin_gamma_range),
                 }
         elif surface == "varying_slope":
             if cfg.dA == 1:
@@ -885,25 +872,16 @@ def structural_response(A: np.ndarray | float, L: np.ndarray, dgp: DGPDefinition
                 linear = A_arr @ beta_a[:, None]
                 quad = np.einsum("ni,ij,nj->n", A_arr, Q, A_arr)[:, None]
                 val = baseline_response + linear + quad
-        elif outcome_theta.surface == "tanh":
+        elif outcome_theta.surface == "sinusoidal":
             amp = float(outcome_theta.params["amp"])
+            freq = float(outcome_theta.params["freq"])
             gamma = np.asarray(outcome_theta.params["gamma"], dtype=float)
-            if A_arr.shape[1] == 1 and "slope" in outcome_theta.params:
-                slope = float(outcome_theta.params["slope"])
-                phase = slope * A_arr + L @ gamma[:, None]
+            if A_arr.shape[1] == 1:
+                phase = freq * A_arr + L @ gamma[:, None]
             else:
                 w = np.asarray(outcome_theta.params["w"], dtype=float)
-                phase = A_arr @ w[:, None] + L @ gamma[:, None]
-            val = baseline_response + amp * np.tanh(phase)
-        elif outcome_theta.surface == "thresh":
-            threshold_effect = _threshold_effect(L, outcome_theta)
-            w = outcome_theta.params["w"]
-            if np.ndim(w) == 0:
-                gate = (float(w) * A_arr >= 0.0).astype(float)
-            else:
-                w_vec = np.asarray(w, dtype=float)
-                gate = (A_arr @ w_vec[:, None] >= 0.0).astype(float)
-            val = baseline_response + threshold_effect * gate
+                phase = freq * (A_arr @ w[:, None]) + L @ gamma[:, None]
+            val = baseline_response + amp * np.sin(phase)
         elif outcome_theta.surface == "varying_slope":
             if A_arr.shape[1] == 1 and "lam" in outcome_theta.params:
                 varying_slope = _varying_slope_effect(L, outcome_theta)
