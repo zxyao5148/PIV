@@ -7,6 +7,7 @@ LOG_DIR="${ROOT_DIR}/logs/run_npiv_syn"
 CHECKPOINT_DIR="${ROOT_DIR}/outputs/checkpoints/npiv_syn"
 SEEDS_CSV="$(seq -s, 1 10)"
 TREATMENT_TYPES_CSV="continuous,binary"
+DA_VALUES_CSV="1"
 DESIGN_SEED=1
 GPU_IDS_CSV="0"
 WORKERS_PER_GPU=2
@@ -22,6 +23,7 @@ Options:
   --seeds CSV             Comma-separated seeds (used for both data_seed and train_seed).
                           Default: 1,2,3,4,5,6,7,8,9,10
   --treatment-types CSV   Comma-separated treatment types (continuous,binary). Default: both
+  --da-values CSV         Comma-separated dA values. Default: 1
   --design-seed N         Fixed design seed. Default: 1
   --gpu-ids CSV           Physical CUDA GPU ids. Default: 0
   --workers-per-gpu N     Concurrent workers per GPU. Default: 2
@@ -37,9 +39,9 @@ Examples:
     --seeds 1,2 --treatment-types continuous \
     -- --surface poly --methods TrueIV --downstream deepiv
 
-  # Full run: 10 seeds, all surfaces and treatment types
+  # Full run: 10 seeds, scalar + vector treatment, all surfaces
   scripts/npiv_syn/run_npiv_syn_batch.sh \
-    --seeds 1,2,3,4,5,6,7,8,9,10 \
+    --seeds 1,2,3,4,5,6,7,8,9,10 --da-values 1,2 \
     -- --methods PIV TrueIV NoneIV --downstream deepiv dfiv
 EOF
 }
@@ -48,6 +50,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --seeds|--train-seeds)
       SEEDS_CSV="$2"; shift 2 ;;
+    --da-values)
+      DA_VALUES_CSV="$2"; shift 2 ;;
     --treatment-types)
       TREATMENT_TYPES_CSV="$2"; shift 2 ;;
     --design-seed)
@@ -75,6 +79,7 @@ done
 
 IFS=',' read -r -a SEEDS <<< "${SEEDS_CSV}"
 IFS=',' read -r -a TREATMENT_TYPES <<< "${TREATMENT_TYPES_CSV}"
+IFS=',' read -r -a DA_VALUES <<< "${DA_VALUES_CSV}"
 IFS=',' read -r -a GPU_IDS <<< "${GPU_IDS_CSV}"
 
 declare -A SURFACES_FOR_TYPE
@@ -122,8 +127,10 @@ for treatment_type in "${TREATMENT_TYPES[@]}"; do
     IFS=' ' read -r -a surfaces <<< "${SURFACES_FOR_TYPE[$treatment_type]:-}"
   fi
   for surface in "${surfaces[@]}"; do
-    for seed in "${SEEDS[@]}"; do
-      printf '%s %s %s\n' "${treatment_type}" "${surface}" "${seed}" >> "${JOB_FILE}"
+    for dA in "${DA_VALUES[@]}"; do
+      for seed in "${SEEDS[@]}"; do
+        printf '%s %s %s %s\n' "${treatment_type}" "${surface}" "${dA}" "${seed}" >> "${JOB_FILE}"
+      done
     done
   done
 done
@@ -152,7 +159,7 @@ PY
 
 run_worker() {
   local gpu_id="${1:-}"
-  local job treatment_type surface seed log_path
+  local job treatment_type surface dA seed log_path da_tag
 
   while true; do
     job="$(pop_next_job)"
@@ -161,15 +168,17 @@ run_worker() {
       break
     fi
 
-    read -r treatment_type surface seed <<< "${job}"
-    log_path="${LOG_DIR}/run_npiv_syn_${treatment_type}_${surface}_seed${seed}.log"
-    echo "=== worker device=${DEVICE}${gpu_id:+ gpu=${gpu_id}}: treatment=${treatment_type} surface=${surface} seed=${seed} -> ${log_path}"
+    read -r treatment_type surface dA seed <<< "${job}"
+    da_tag="$( [[ "${dA}" -gt 1 ]] && echo "_dA${dA}" || echo "" )"
+    log_path="${LOG_DIR}/run_npiv_syn_${treatment_type}_${surface}${da_tag}_seed${seed}.log"
+    echo "=== worker device=${DEVICE}${gpu_id:+ gpu=${gpu_id}}: treatment=${treatment_type} surface=${surface} dA=${dA} seed=${seed} -> ${log_path}"
 
     local base_args=(
       "--treatment-type" "${treatment_type}"
       "--design-seed" "${DESIGN_SEED}"
       "--data-seed" "${seed}"
       "--train-seed" "${seed}"
+      "--dA" "${dA}"
       "--checkpoint-dir" "${CHECKPOINT_DIR}"
     )
 
