@@ -108,7 +108,12 @@ class SimConfig:
 
     alpha0_range: tuple[float, float] = (-0.5, 0.5)
     alpha_range: tuple[float, float] = (-1.0, 1.0)
-    gamma_u_range: tuple[float, float] = (0.5, 1.5)
+    gamma_u_range: tuple[float, float] = (1.0, 2.0)
+
+    # Minimum marginal confounding correlation rho = gamma_u / sqrt(IV_var + gamma_u² + sigma_a²)
+    # for continuous treatment.  rho < threshold → treatment theta rejected.
+    # Set to 0.0 to disable.  Default 0.30 ensures U explains ≥ 9% of Var(A|C,L).
+    min_continuous_confound_ratio: float = 0.30
 
     delta_range: tuple[float, float] = (-1.0, 1.0)
     delta_u_range: tuple[float, float] = (0.5, 1.5)
@@ -540,6 +545,39 @@ def _binary_vector_signal_ratio_and_positivity_stats(
     return out
 
 
+def _continuous_confound_ratio(
+    treatment_theta: TreatmentTheta,
+    cfg: SimConfig,
+    pilot_rng: Generator,
+) -> float:
+    """Marginal confounding correlation rho = gamma_u / sqrt(E[IV_var(L)] + gamma_u² + sigma_a²).
+
+    This is the correlation of U with A given (C, L) but NOT V — the endogeneity
+    that a noise-instrument (NoneIV) estimator cannot remove.  When the IV signal
+    E[||beta(L)||²] is large, rho shrinks even if gamma_u is moderate, which is
+    why the confounding filter is needed.
+
+    For vector treatment (dA > 1) each coordinate is checked and the minimum rho
+    is returned (no pilot needed: IV variance ||B[j,:]||² is analytic for V~N(0,I)).
+    For scalar treatment a pilot draw of L is used to estimate E[||beta(L)||²].
+    """
+    sigma_a2 = cfg.sigma_a ** 2
+    if cfg.dA > 1:
+        if treatment_theta.B is None:
+            return 0.0
+        iv_vars = np.sum(treatment_theta.B ** 2, axis=1)  # ||B[j,:]||² per treatment dim
+        gamma_u = treatment_theta.gamma_u  # shape (dA,)
+        rhos = gamma_u / np.sqrt(iv_vars + gamma_u ** 2 + sigma_a2)
+        return float(np.min(rhos))
+    else:
+        n = cfg.binary_pilot_n
+        L_pilot = pilot_rng.binomial(n=1, p=0.5, size=(n, cfg.dL)).astype(float)
+        betaL = treatment_loading(L_pilot, treatment_theta)  # (n, dV)
+        mean_iv_var = float(np.mean(np.sum(betaL ** 2, axis=1)))  # E_L[||beta(L)||²]
+        gamma_u_val = float(treatment_theta.gamma_u[0])
+        return gamma_u_val / float(np.sqrt(mean_iv_var + gamma_u_val ** 2 + sigma_a2))
+
+
 def accept_treatment_theta(
     treatment_theta: TreatmentTheta,
     cfg: SimConfig,
@@ -556,6 +594,9 @@ def accept_treatment_theta(
         if float(row_norms.min()) < cfg.min_B_row_norm:
             return False
         if treatment_type == "continuous":
+            if pilot_rng is not None and cfg.min_continuous_confound_ratio > 0.0:
+                if _continuous_confound_ratio(treatment_theta, cfg, pilot_rng) < cfg.min_continuous_confound_ratio:
+                    return False
             treatment_theta.binary_accept_stats = {}
             return True
         if pilot_rng is None:
@@ -593,6 +634,9 @@ def accept_treatment_theta(
     if float(beta_norms.min()) < cfg.min_beta_norm_anchor:
         return False
     if treatment_type == "continuous":
+        if pilot_rng is not None and cfg.min_continuous_confound_ratio > 0.0:
+            if _continuous_confound_ratio(treatment_theta, cfg, pilot_rng) < cfg.min_continuous_confound_ratio:
+                return False
         treatment_theta.binary_accept_stats = {}
         return True
     if pilot_rng is None:
@@ -615,7 +659,7 @@ def sample_treatment_theta_with_accept_reject(root_ss: SeedSequence, cfg: SimCon
         proposal_ss, pilot_ss = ss.spawn(2)
         rng = np.random.default_rng(proposal_ss)
         theta = propose_treatment_theta(rng, cfg)
-        pilot_rng = np.random.default_rng(pilot_ss) if treatment_type == "binary" else None
+        pilot_rng = np.random.default_rng(pilot_ss)
         if accept_treatment_theta(theta, cfg, treatment_type, pilot_rng=pilot_rng):
             theta.accepted_attempt = attempt
             return theta

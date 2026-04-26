@@ -82,9 +82,13 @@ IFS=',' read -r -a TREATMENT_TYPES <<< "${TREATMENT_TYPES_CSV}"
 IFS=',' read -r -a DA_VALUES <<< "${DA_VALUES_CSV}"
 IFS=',' read -r -a GPU_IDS <<< "${GPU_IDS_CSV}"
 
-declare -A SURFACES_FOR_TYPE
-SURFACES_FOR_TYPE["continuous"]="poly tanh thresh varying_slope"
-SURFACES_FOR_TYPE["binary"]="binary_linear binary_threshold_modulated"
+get_surfaces_for_type() {
+  case "$1" in
+    continuous) echo "poly tanh thresh varying_slope" ;;
+    binary)     echo "binary_linear binary_threshold_modulated" ;;
+    *)          echo "" ;;
+  esac
+}
 
 # If RUN_ARGS contains --surface, honour it (single surface mode).
 # Otherwise expand all surfaces for each treatment type.
@@ -124,7 +128,7 @@ for treatment_type in "${TREATMENT_TYPES[@]}"; do
   if [[ -n "${EXPLICIT_SURFACE}" ]]; then
     surfaces=("${EXPLICIT_SURFACE}")
   else
-    IFS=' ' read -r -a surfaces <<< "${SURFACES_FOR_TYPE[$treatment_type]:-}"
+    IFS=' ' read -r -a surfaces <<< "$(get_surfaces_for_type "${treatment_type}")"
   fi
   for surface in "${surfaces[@]}"; do
     for dA in "${DA_VALUES[@]}"; do
