@@ -1,12 +1,45 @@
-# Training
-s1_epochs: 80
-s2_epochs: 160
-s1_patience: 20
-s2_patience: 30
-lr: 0.0007
+scalar:
+  treatment_types:
+    continuous:
+      s1_epochs: 200
+      s2_epochs: 400
+      s1_patience: 50
+      s2_patience: 80
+      lr: 0.0007
+      encoder_hidden_dims: [256, 256]
+      score_hidden_dims: [128, 128]
+      treatment_hidden_dims: [128, 128]
+      activation: relu
+    binary:
+      s1_epochs: 200
+      s2_epochs: 400
+      s1_patience: 50
+      s2_patience: 80
+      lr: 0.0007
+      encoder_hidden_dims: [256, 256]
+      score_hidden_dims: [128, 128]
+      treatment_hidden_dims: [128, 128]
+      activation: relu
 
-# Architecture (Stage1 encoder, score head, Stage2 treatment head)
-encoder_hidden_dims: [256, 256]
-score_hidden_dims: [128, 128]
-treatment_hidden_dims: [128, 128]
-activation: relu
+vector:
+  treatment_types:
+    continuous:
+      s1_epochs: 300
+      s2_epochs: 500
+      s1_patience: 80
+      s2_patience: 100
+      lr: 0.0007
+      encoder_hidden_dims: [256, 256, 256]
+      score_hidden_dims: [256, 256]
+      treatment_hidden_dims: [256, 256]
+      activation: relu
+    binary:
+      s1_epochs: 300
+      s2_epochs: 500
+      s1_patience: 80
+      s2_patience: 100
+      lr: 0.0007
+      encoder_hidden_dims: [256, 256, 256]
+      score_hidden_dims: [256, 256]
+      treatment_hidden_dims: [256, 256]
+      activation: relu

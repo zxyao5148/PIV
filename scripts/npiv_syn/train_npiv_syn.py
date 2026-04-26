@@ -69,6 +69,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dD", type=int, default=2)
     parser.add_argument("--dL", type=int, default=None)
     parser.add_argument("--dM", type=int, default=None)
+    parser.add_argument("--dA", type=int, default=1)
     parser.add_argument("--sigma-m", type=float, default=0.50, dest="sigma_m")
     parser.add_argument("--sigma-a", type=float, default=1.00, dest="sigma_a")
     parser.add_argument("--sigma-y", type=float, default=1.00, dest="sigma_y")
@@ -159,7 +160,7 @@ def main() -> None:
     l_te = test_raw["L"].float()
     a_ref_override = float(str(args.contrast_ref_a).strip()) if str(args.contrast_ref_a).strip() else None
     a_ref, a_grid, _ = build_counterfactual_eval(
-        np.asarray(raw["A"], dtype=np.float64).reshape(-1),
+        np.asarray(raw["A"], dtype=np.float64),
         np.asarray(raw["L"], dtype=np.float64),
         h0_fn,
         treatment_type=treatment_type,
@@ -170,17 +171,26 @@ def main() -> None:
     )
     true_tau = true_contrast_matrix(a_grid, a_ref, l_te.numpy(), h0_fn)
 
+    dA = int(args.dA)
+    a_ref_str = (
+        f"{float(a_ref):.4f}" if np.ndim(a_ref) == 0 else
+        np.array2string(np.asarray(a_ref), precision=4, separator=",")
+    )
+    a_grid_0 = a_grid[0] if a_grid.ndim == 1 else a_grid[0, 0]
+    a_grid_last = a_grid[-1] if a_grid.ndim == 1 else a_grid[-1, 0]
+
     print(f"Checkpoints: {ckpt_root}")
     print(
         f"\n=== NPIV SYN run: treatment_type={treatment_type}  surface={args.surface}  design_seed={args.design_seed}  "
-        f"data_seed={args.data_seed}  train_seed={args.train_seed} ===",
+        f"data_seed={args.data_seed}  train_seed={args.train_seed}  dA={dA} ===",
     )
     print(
-        f"Reference a0={a_ref:.4f}  "
-        f"grid=[{a_grid[0]:.3f}, {a_grid[-1]:.3f}] (n={len(a_grid)})",
+        f"Reference a0={a_ref_str}  "
+        f"grid=[{a_grid_0:.3f}, {a_grid_last:.3f}] (n={len(a_grid)})",
     )
 
     mse_by_key: dict[tuple[str, str], float] = {}
+    tau_hat_by_key: dict[tuple[str, str], np.ndarray] = {}
     probe_by_method: dict[tuple[str, str], float] = {}
 
     for method in list(dict.fromkeys(args.methods)):
@@ -188,6 +198,7 @@ def main() -> None:
             args,
             dataset="npiv_syn",
             iv_method=method,
+            dA=int(args.dA),
         )
         attach_npiv_fingerprint_compat(model_args)
         fp_extra = npiv_syn_fingerprint_extra(model_args)
@@ -200,6 +211,7 @@ def main() -> None:
             data_seed=int(args.data_seed),
             train_seed=int(args.train_seed),
             method=method,
+            dA=dA,
         )
         w_tr, z_tr, w_va, z_va, w_te, z_te = load_or_train_iv(
             method,
@@ -297,6 +309,7 @@ def main() -> None:
                 method=method,
                 downstream=downstream,
                 oracle_c=bool(args.oracle_c),
+                dA=dA,
             )
             model, norms = fit_npiv(
                 downstream,
@@ -327,6 +340,7 @@ def main() -> None:
             )
             mse = contrast_mse(tau_hat, true_tau)
             mse_by_key[(method, downstream)] = float(mse)
+            tau_hat_by_key[(method, downstream)] = tau_hat
             print(f"       contrast MSE = {mse:.6f}")
 
     print(f"\n{'=' * 72}")
@@ -335,7 +349,7 @@ def main() -> None:
         f"data={args.data_seed}, train={args.train_seed}] "
         "Unit-level treatment contrast MSE  E[(tau_hat-tau)^2]",
     )
-    print(f"Reference a0 = {a_ref:.6f}")
+    print(f"Reference a0 = {a_ref_str}")
     print(f"{'=' * 72}")
     for method in list(dict.fromkeys(args.methods)):
         print(
@@ -351,6 +365,43 @@ def main() -> None:
             for downstream in list(dict.fromkeys(args.downstream)):
                 mse = mse_by_key[(method, downstream)]
                 print(f"  {method:10}  {downstream:8}  {mse:.6f}")
+
+    if treatment_type == "binary" and tau_hat_by_key:
+        _print_binary_contrast_table(true_tau, tau_hat_by_key, a_grid, a_ref)
+
+
+def _print_binary_contrast_table(
+    true_tau: np.ndarray,
+    tau_hat_by_key: dict[tuple[str, str], np.ndarray],
+    a_grid: np.ndarray,
+    a_ref,
+) -> None:
+    """Print ground truth vs estimated population-mean contrasts for each binary treatment pattern."""
+    dA = a_grid.shape[1] if a_grid.ndim > 1 else 1
+    n_grid = len(a_grid)
+    a_ref_arr = np.asarray(a_ref, dtype=np.float64).ravel()
+
+    non_ref_idx = [
+        j for j in range(n_grid)
+        if not np.allclose(
+            np.asarray(a_grid[j], dtype=np.float64).ravel(), a_ref_arr, atol=1e-6,
+        )
+    ]
+    if not non_ref_idx:
+        return
+
+    header_parts = ["true"] + [f"{m}/{ds}" for m, ds in tau_hat_by_key]
+    print(f"\n  Binary contrast values (pop mean E_L[tau(a,L)]):")
+    print(f"  {'a':12s}  " + "  ".join(f"{h:>12s}" for h in header_parts))
+    for j in non_ref_idx:
+        a_j = np.asarray(a_grid[j], dtype=np.float64).ravel()
+        a_str = "[" + ",".join(f"{v:.0f}" for v in a_j) + "]" if dA > 1 else f"{float(a_j[0]):.1f}"
+        true_mean = float(np.mean(true_tau[:, j]))
+        vals = [f"{true_mean:+.4f}"] + [
+            f"{float(np.mean(tau_hat_by_key[k][:, j])):+.4f}"
+            for k in tau_hat_by_key
+        ]
+        print(f"  {a_str:12s}  " + "  ".join(f"{v:>12s}" for v in vals))
 
 
 if __name__ == "__main__":

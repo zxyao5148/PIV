@@ -80,6 +80,8 @@ def add_model_config_arguments(
         parser.add_argument("--dfiv-lr-phi", type=float, default=None, dest="dfiv_lr_phi")
         parser.add_argument("--dfiv-batch-size", type=int, default=None, dest="dfiv_batch_size")
         parser.add_argument("--dfiv-weight-decay", type=float, default=None, dest="dfiv_weight_decay")
+        parser.add_argument("--dfiv-weight-decay-psi", type=float, default=None, dest="dfiv_weight_decay_psi")
+        parser.add_argument("--dfiv-weight-decay-phi", type=float, default=None, dest="dfiv_weight_decay_phi")
         parser.add_argument("--dfiv-val-frac", type=float, default=None, dest="dfiv_val_frac")
         parser.add_argument("--dfiv-patience", type=int, default=None, dest="dfiv_patience")
 
@@ -91,8 +93,14 @@ def load_model_config(
     *,
     surface: str | None = None,
     treatment_type: str | None = None,
+    dA: int = 1,
 ) -> dict[str, object]:
-    """Load one model-config dict from the repo-local ``config`` tree."""
+    """Load one model-config dict from the repo-local ``config`` tree.
+
+    If the YAML file has top-level ``scalar:`` / ``vector:`` blocks the
+    appropriate one is selected based on ``dA`` (1 → scalar, >1 → vector).
+    Otherwise the file is parsed with the legacy ``treatment_types:`` layout.
+    """
     if group == "iv_representation_models":
         module_name = IV_REPRESENTATION_MODEL_MODULES[model_name]
     elif group == "npiv_estimators":
@@ -112,29 +120,38 @@ def load_model_config(
     if not isinstance(raw, dict):
         raise ValueError(f"{config_path} must contain a mapping at the top level")
 
-    if "defaults" in raw:
-        cfg = copy.deepcopy(raw.get("defaults") or {})
+    # scalar/vector split: select the right top-level block
+    if "scalar" in raw or "vector" in raw:
+        block_key = "scalar" if int(dA) == 1 else "vector"
+        raw = copy.deepcopy(raw.get(block_key) or {})
+        if not isinstance(raw, dict):
+            raise ValueError(f"{config_path}: '{block_key}' block must be a mapping")
+
+    treatment_types_block = raw.get("treatment_types") or {}
+    if treatment_types_block:
+        cfg = copy.deepcopy(treatment_types_block.get("continuous") or {})
         if not isinstance(cfg, dict):
-            raise ValueError(f"{config_path}: defaults must be a mapping")
-        if treatment_type:
-            treatment_cfg = (raw.get("treatment_types") or {}).get(treatment_type, {})
+            raise ValueError(f"{config_path}: treatment_types.continuous must be a mapping")
+        if treatment_type and treatment_type != "continuous":
+            treatment_cfg = treatment_types_block.get(treatment_type, {})
             if treatment_cfg:
                 if not isinstance(treatment_cfg, dict):
                     raise ValueError(
                         f"{config_path}: treatment_types.{treatment_type} must be a mapping",
                     )
                 cfg.update(copy.deepcopy(treatment_cfg))
-        if surface:
-            surface_cfg = (raw.get("surfaces") or {}).get(surface, {})
-            if surface_cfg:
-                if not isinstance(surface_cfg, dict):
-                    raise ValueError(
-                        f"{config_path}: surfaces.{surface} must be a mapping",
-                    )
-                cfg.update(copy.deepcopy(surface_cfg))
-        return cfg
+    else:
+        return copy.deepcopy(raw)
 
-    return copy.deepcopy(raw)
+    if surface:
+        surface_cfg = (raw.get("surfaces") or {}).get(surface, {})
+        if surface_cfg:
+            if not isinstance(surface_cfg, dict):
+                raise ValueError(
+                    f"{config_path}: surfaces.{surface} must be a mapping",
+                )
+            cfg.update(copy.deepcopy(surface_cfg))
+    return cfg
 
 
 def apply_config_defaults(
@@ -159,6 +176,7 @@ def configured_model_args(
     dataset: str,
     iv_method: str,
     include_npiv_estimators: tuple[str, ...] = ("deepiv", "dfiv"),
+    dA: int = 1,
 ) -> argparse.Namespace:
     """Return a copy of ``args`` with model-config defaults applied."""
     out = clone_namespace(args)
@@ -171,6 +189,7 @@ def configured_model_args(
             "iv_representation_models",
             iv_method,
             treatment_type=treatment_type,
+            dA=dA,
         ),
     )
     for estimator in include_npiv_estimators:
@@ -182,6 +201,7 @@ def configured_model_args(
                 estimator,
                 surface=surface,
                 treatment_type=treatment_type,
+                dA=dA,
             ),
         )
     return out

@@ -96,6 +96,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dD", type=int, default=2)
     parser.add_argument("--dL", type=int, default=None)
     parser.add_argument("--dM", type=int, default=None)
+    parser.add_argument("--dA", type=int, default=1)
     parser.add_argument("--sigma-m", type=float, default=0.50, dest="sigma_m")
     parser.add_argument("--sigma-a", type=float, default=1.00, dest="sigma_a")
     parser.add_argument("--sigma-y", type=float, default=1.00, dest="sigma_y")
@@ -192,6 +193,7 @@ def _resolve_train_seeds(
         treatment_type=treatment_type,
         design_seed=int(args.design_seed),
         data_seed=int(args.data_seed),
+        dA=int(getattr(args, "dA", 1)),
     )
     if not seeds:
         raise SystemExit(
@@ -291,8 +293,9 @@ def evaluate_train_seed_bundle(
     else:
         oracle_c_tr = oracle_c_va = oracle_c_te = None
 
+    dA = int(getattr(args, "dA", 1))
     l_te = test_raw["L"].float()
-    a_ref = float(eval_setup["a_ref"])
+    a_ref = eval_setup["a_ref"]  # float (scalar) or (dA,) array (vector)
     a_grid = np.asarray(eval_setup["a_grid"], dtype=np.float64)
     h0_fn = eval_setup["h0_fn"]
 
@@ -312,7 +315,7 @@ def evaluate_train_seed_bundle(
     contrast_surface_store: dict[tuple[str, str], list[np.ndarray]] = {}
 
     for method in methods:
-        model_args = configured_model_args(bundle_args, dataset="npiv_syn", iv_method=method)
+        model_args = configured_model_args(bundle_args, dataset="npiv_syn", iv_method=method, dA=int(getattr(bundle_args, "dA", 1)))
         attach_npiv_fingerprint_compat(model_args)
         fp_extra = npiv_syn_fingerprint_extra(model_args)
 
@@ -320,7 +323,7 @@ def evaluate_train_seed_bundle(
             ckpt_root,
             surface=surface, treatment_type=treatment_type,
             design_seed=int(args.design_seed), data_seed=int(args.data_seed),
-            train_seed=int(train_seed), method=method,
+            train_seed=int(train_seed), method=method, dA=dA,
         )
         w_tr, z_tr, w_va, z_va, w_te, z_te = load_or_train_iv(
             method, iv_ckpt_path, loaders, eval_loaders, model_args, dims,
@@ -350,7 +353,7 @@ def evaluate_train_seed_bundle(
                 surface=surface, treatment_type=treatment_type,
                 design_seed=int(args.design_seed), data_seed=int(args.data_seed),
                 train_seed=int(train_seed), method=method, downstream=downstream,
-                oracle_c=bool(args.oracle_c),
+                oracle_c=bool(args.oracle_c), dA=dA,
             )
             model, norms = fit_npiv(
                 downstream, tr_np, w_tr, z_tr, model_args, device, dims,
@@ -367,10 +370,11 @@ def evaluate_train_seed_bundle(
             unit_hat[(train_seed, method, downstream)] = np.asarray(
                 tau_hat[:, unit_plot_index], dtype=np.float64,
             )
-            surf_arr = hat_contrast_surface(
-                model, a_grid, a_ref, l_grid, 0, l_te, w_te, device, norms,
-            )
-            contrast_surface_store.setdefault((method, downstream), []).append(surf_arr)
+            if dA == 1:
+                surf_arr = hat_contrast_surface(
+                    model, a_grid, a_ref, l_grid, 0, l_te, w_te, device, norms,
+                )
+                contrast_surface_store.setdefault((method, downstream), []).append(surf_arr)
 
     return {
         "train_seed": train_seed,
@@ -394,6 +398,7 @@ def aggregate_evaluations_for_scenario(
     methods: list[str],
     downstreams: list[str],
 ) -> dict[str, object]:
+    dA = int(getattr(args, "dA", 1))
     eval_setup = build_npiv_syn_eval_setup(
         args, surface=surface, treatment_type=treatment_type,
     )
@@ -401,14 +406,17 @@ def aggregate_evaluations_for_scenario(
     l_grid = _build_l_grid(args, eval_setup["pop_l"])
     unit_plot_index = select_unit_plot_index(a_grid, int(args.unit_plot_grid_index))
 
-    true_surf = true_contrast_surface(
-        a_grid, float(eval_setup["a_ref"]), l_grid, 0,
-        eval_setup["pop_l"], eval_setup["h0_fn"],
-    )
+    if dA == 1:
+        true_surf = true_contrast_surface(
+            a_grid, eval_setup["a_ref"], l_grid, 0,
+            eval_setup["pop_l"], eval_setup["h0_fn"],
+        )
+    else:
+        true_surf = None
 
     aggregated: dict[str, object] = {
         "train_seeds": train_seeds,
-        "a_ref": float(eval_setup["a_ref"]),
+        "a_ref": eval_setup["a_ref"],
         "a_grid": a_grid,
         "tau_pop_true": np.asarray(eval_setup["tau_pop_true"], dtype=np.float64),
         "l_grid": l_grid,
@@ -420,6 +428,7 @@ def aggregate_evaluations_for_scenario(
         "mse_store": {},
         "pop_hat_store": {},
         "contrast_surface_store": {},
+        "dA": dA,
     }
 
     for train_seed in train_seeds:
@@ -454,12 +463,17 @@ def report_scenario_metrics(
     probes: list[str],
 ) -> None:
     seeds = aggregated["train_seeds"]
+    a_ref = aggregated["a_ref"]
+    a_ref_str = (
+        f"{float(a_ref):.6f}" if np.ndim(a_ref) == 0
+        else np.array2string(np.asarray(a_ref), precision=6, separator=",")
+    )
     print(f"\n{'=' * 72}")
     print(
         f"[surface={surface}  treatment={treatment_type}] "
         "Unit-level contrast MSE  (mean ± sd over seeds)",
     )
-    print(f"Reference a0 = {aggregated['a_ref']:.6f}")
+    print(f"Reference a0 = {a_ref_str}")
     print(f"{'=' * 72}")
     for method in methods:
         probe_parts = []
@@ -476,6 +490,58 @@ def report_scenario_metrics(
             sd = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
             print(f"  {method:10}  {ds:8}  {mean:.6f}  ± {sd:.6f}  (n={len(vals)})")
 
+    if treatment_type == "binary":
+        _print_binary_contrast_table_test(aggregated, methods, downstreams)
+
+
+def _print_binary_contrast_table_test(
+    aggregated: dict[str, object],
+    methods: list[str],
+    downstreams: list[str],
+) -> None:
+    """Print ground truth vs estimated population-mean contrasts for binary treatment."""
+    a_grid = np.asarray(aggregated["a_grid"], dtype=np.float64)
+    a_ref = aggregated["a_ref"]
+    tau_pop_true = np.asarray(aggregated["tau_pop_true"], dtype=np.float64)
+    train_seeds = aggregated["train_seeds"]
+    pop_hat_store = aggregated["pop_hat_store"]
+
+    dA = a_grid.shape[1] if a_grid.ndim > 1 else 1
+    n_grid = len(a_grid)
+    a_ref_arr = np.asarray(a_ref, dtype=np.float64).ravel()
+
+    non_ref_idx = [
+        j for j in range(n_grid)
+        if not np.allclose(
+            np.asarray(a_grid[j], dtype=np.float64).ravel(), a_ref_arr, atol=1e-6,
+        )
+    ]
+    if not non_ref_idx:
+        return
+
+    keys = [(m, ds) for m in methods for ds in downstreams]
+    header_parts = ["true"] + [f"{m}/{ds}" for m, ds in keys]
+    print(f"\n  Binary contrast values (pop mean E_L[tau(a,L)], mean ± sd over seeds):")
+    print(f"  {'a':12s}  " + "  ".join(f"{h:>20s}" for h in header_parts))
+    for j in non_ref_idx:
+        a_j = np.asarray(a_grid[j], dtype=np.float64).ravel()
+        a_str = "[" + ",".join(f"{v:.0f}" for v in a_j) + "]" if dA > 1 else f"{float(a_j[0]):.1f}"
+        true_val = float(tau_pop_true[j])
+        row = [f"{true_val:+.4f}"]
+        for m, ds in keys:
+            seed_vals = [
+                float(pop_hat_store[(ts, m, ds)][0][j])
+                for ts in train_seeds
+                if (ts, m, ds) in pop_hat_store
+            ]
+            if seed_vals:
+                mean = float(np.mean(seed_vals))
+                sd = float(np.std(seed_vals, ddof=1)) if len(seed_vals) > 1 else 0.0
+                row.append(f"{mean:+.4f}±{sd:.4f}")
+            else:
+                row.append("n/a")
+        print(f"  {a_str:12s}  " + "  ".join(f"{v:>20s}" for v in row))
+
 
 def render_scenario_figures(
     out_dir: Path,
@@ -487,6 +553,10 @@ def render_scenario_figures(
     downstreams: list[str],
     probes: list[str],
 ) -> None:
+    dA = int(aggregated.get("dA", 1))
+    if dA > 1:
+        return  # visualization not supported for vector treatment (continuous or binary)
+
     out_dir.mkdir(parents=True, exist_ok=True)
     train_seeds = aggregated["train_seeds"]
     a_grid = np.asarray(aggregated["a_grid"], dtype=np.float64)
@@ -511,6 +581,7 @@ def render_scenario_figures(
     )
 
     true_surf = np.asarray(aggregated["true_surf"], dtype=np.float64)
+    a_ref_scalar = float(np.asarray(aggregated["a_ref"]).flat[0])
 
     for downstream in downstreams:
         tau_hat_by_method: dict[str, np.ndarray] = {}
@@ -527,7 +598,7 @@ def render_scenario_figures(
         if treatment_type == "continuous":
             save_surface_heatmap(
                 out_dir / f"npiv_syn_surface_{downstream}.png",
-                a_grid=a_grid, l_grid=l_grid, a_ref=float(aggregated["a_ref"]),
+                a_grid=a_grid, l_grid=l_grid, a_ref=a_ref_scalar,
                 tau_true=true_surf, tau_hat_by_method=tau_hat_by_method,
                 downstream=downstream, surface=surface, treatment_type=treatment_type,
                 n_seeds=n_seeds_eff,

@@ -460,13 +460,25 @@ def train_deepiv(
     rng = rng if rng is not None else np.random.default_rng(0)
     treatment_family = str(getattr(deepiv, "treatment_family", "continuous"))
     if treatment_family == "binary":
-        a_mean = 0.0
-        a_std = 1.0
-        a_n = np.asarray(a, dtype=np.float32).reshape(-1)
+        a_arr_bin = np.asarray(a, dtype=np.float32)
+        if a_arr_bin.ndim == 1:
+            a_arr_bin = a_arr_bin.reshape(-1, 1)
+        a_n = a_arr_bin
+        if a_arr_bin.shape[1] > 1:
+            a_mean: float | np.ndarray = np.zeros(a_arr_bin.shape[1], dtype=np.float64)
+            a_std: float | np.ndarray = np.ones(a_arr_bin.shape[1], dtype=np.float64)
+        else:
+            a_mean = 0.0
+            a_std = 1.0
     else:
-        a_mean = float(a.mean())
-        a_std = float(a.std()) + 1e-8
-        a_n = ((a - a_mean) / a_std).astype(np.float32)
+        a_arr = np.asarray(a)
+        if a_arr.ndim > 1 and a_arr.shape[1] > 1:
+            a_mean = a_arr.mean(axis=0)        # (dA,)
+            a_std = a_arr.std(axis=0) + 1e-8   # (dA,)
+        else:
+            a_mean = float(a_arr.mean())
+            a_std = float(a_arr.std()) + 1e-8
+        a_n = ((a_arr - a_mean) / a_std).astype(np.float32)
     y_mean = float(y.mean()); y_std = float(y.std()) + 1e-8
     w_mean, w_std, l_mean, l_std = wl_norm_stats(w, l, enabled=normalize_wl)
     z_mean = z.mean(axis=0); z_std = z.std(axis=0) + 1e-8
@@ -482,7 +494,7 @@ def train_deepiv(
     )
     n = a_n.shape[0]
     if has_external_val:
-        n_val = int(np.asarray(a_val_raw).reshape(-1).shape[0])
+        n_val = int(np.asarray(a_val_raw).shape[0])
         tr_idx = np.arange(n)
         val_idx = np.empty((0,), dtype=np.int64)
     else:
@@ -504,9 +516,12 @@ def train_deepiv(
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     if has_external_val:
         if treatment_family == "binary":
-            a_val_n = np.asarray(a_val_raw, dtype=np.float32).reshape(-1)
+            a_val_arr = np.asarray(a_val_raw, dtype=np.float32)
+            if a_val_arr.ndim == 1:
+                a_val_arr = a_val_arr.reshape(-1, 1)
+            a_val_n = a_val_arr
         else:
-            a_val_n = ((np.asarray(a_val_raw).reshape(-1) - a_mean) / a_std).astype(np.float32)
+            a_val_n = ((np.asarray(a_val_raw) - a_mean) / a_std).astype(np.float32)
         z_val_n = ((np.asarray(z_val_raw) - z_mean) / z_std).astype(np.float32)
         w_val_n = ((np.asarray(w_val_raw) - w_mean) / w_std).astype(np.float32)
         l_val_n = ((np.asarray(l_val_raw) - l_mean) / l_std).astype(np.float32)
@@ -692,10 +707,13 @@ def train_deepiv(
         batch_size_eval: int = 2048,
     ) -> np.ndarray:
         preds: list[np.ndarray] = []
-        n_eval = int(np.asarray(a_eval).reshape(-1).shape[0])
+        n_eval = int(np.asarray(a_eval).shape[0])
         for lo in range(0, n_eval, batch_size_eval):
             hi = min(lo + batch_size_eval, n_eval)
-            a_b = torch.as_tensor(a_eval[lo:hi].reshape(-1, 1), dtype=torch.float32, device=device)
+            a_slice = a_eval[lo:hi]
+            if a_slice.ndim == 1:
+                a_slice = a_slice.reshape(-1, 1)
+            a_b = torch.as_tensor(a_slice, dtype=torch.float32, device=device)
             w_b = torch.as_tensor(w_eval[lo:hi], dtype=torch.float32, device=device)
             l_b = torch.as_tensor(l_eval[lo:hi], dtype=torch.float32, device=device)
             preds.append(deepiv.predict(a_b, w_b, l_b).detach().cpu().numpy().reshape(-1))
@@ -750,6 +768,8 @@ def train_dfiv(
     log_every: int = 30,
     lr_phi: float = 1e-4,
     weight_decay: float = 1e-4,
+    weight_decay_psi: float | None = None,
+    weight_decay_phi: float | None = None,
     val_frac: float = 0.1,
     patience: int = 20,
     normalize_wl: bool = True,
@@ -792,12 +812,25 @@ def train_dfiv(
     rng = rng if rng is not None else np.random.default_rng(0)
     treatment_family = str(getattr(model, "treatment_family", "continuous"))
     if treatment_family == "binary":
-        a_mean = 0.0
-        a_std = 1.0
-        a_n = np.asarray(a, dtype=np.float32).reshape(-1)
+        a_arr_bin = np.asarray(a, dtype=np.float32)
+        if a_arr_bin.ndim == 1:
+            a_arr_bin = a_arr_bin.reshape(-1, 1)
+        a_n = a_arr_bin
+        if a_arr_bin.shape[1] > 1:
+            a_mean: float | np.ndarray = np.zeros(a_arr_bin.shape[1], dtype=np.float64)
+            a_std: float | np.ndarray = np.ones(a_arr_bin.shape[1], dtype=np.float64)
+        else:
+            a_mean = 0.0
+            a_std = 1.0
     else:
-        a_mean = float(a.mean()); a_std = float(a.std()) + 1e-8
-        a_n = ((a - a_mean) / a_std).astype(np.float32)
+        a_arr = np.asarray(a)
+        if a_arr.ndim > 1 and a_arr.shape[1] > 1:
+            a_mean = a_arr.mean(axis=0)        # (dA,)
+            a_std = a_arr.std(axis=0) + 1e-8   # (dA,)
+        else:
+            a_mean = float(a_arr.mean())
+            a_std = float(a_arr.std()) + 1e-8
+        a_n = ((a_arr - a_mean) / a_std).astype(np.float32)
     y_mean = float(y.mean()); y_std = float(y.std()) + 1e-8
     w_mean, w_std, l_mean, l_std = wl_norm_stats(w, l, enabled=normalize_wl)
     z_mean = z.mean(axis=0); z_std = z.std(axis=0) + 1e-8
@@ -813,7 +846,7 @@ def train_dfiv(
     )
     n = a_n.shape[0]
     if has_external_val:
-        n_val = int(np.asarray(a_val_raw).reshape(-1).shape[0])
+        n_val = int(np.asarray(a_val_raw).shape[0])
         tr_idx = np.arange(n)
         val_idx = np.empty((0,), dtype=np.int64)
     else:
@@ -858,12 +891,15 @@ def train_dfiv(
     y_tr_full = torch.as_tensor(y_n[tr_idx], dtype=torch.float32, device=device)
 
     if has_external_val:
+        if treatment_family == "binary":
+            a_val_arr2 = np.asarray(a_val_raw, dtype=np.float32)
+            if a_val_arr2.ndim == 1:
+                a_val_arr2 = a_val_arr2.reshape(-1, 1)
+            _a_val_np = a_val_arr2
+        else:
+            _a_val_np = ((np.asarray(a_val_raw) - a_mean) / a_std).astype(np.float32)
         a_val = torch.as_tensor(
-            (
-                np.asarray(a_val_raw, dtype=np.float32).reshape(-1)
-                if treatment_family == "binary"
-                else ((np.asarray(a_val_raw).reshape(-1) - a_mean) / a_std).astype(np.float32)
-            ),
+            _a_val_np,
             dtype=torch.float32,
             device=device,
         )
@@ -910,10 +946,12 @@ def train_dfiv(
         )
 
     wd = float(weight_decay)
-    opt_psi = torch.optim.Adam(model.psi.parameters(), lr=lr, weight_decay=wd)
+    wd_psi = float(weight_decay_psi) if weight_decay_psi is not None else wd
+    wd_phi = float(weight_decay_phi) if weight_decay_phi is not None else wd
+    opt_psi = torch.optim.Adam(model.psi.parameters(), lr=lr, weight_decay=wd_psi)
     opt_xi = torch.optim.Adam(model.xi.parameters(), lr=lr, weight_decay=wd)
     opt_phi = (
-        torch.optim.Adam(model.phi.parameters(), lr=float(lr_phi), weight_decay=wd)
+        torch.optim.Adam(model.phi.parameters(), lr=float(lr_phi), weight_decay=wd_phi)
         if lr_phi and lr_phi > 0 else None
     )
     sched_psi = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -941,9 +979,20 @@ def train_dfiv(
             or l_val is None or y_val is None
         ):
             return float("nan")
-        model.compute_final_mu(a_tr_full, z_tr_full, w_tr_full, l_tr_full, y_tr_full)
-        pred = model.predict(a_val, w_val, l_val)
-        return float(torch.mean((pred - y_val.reshape(-1)) ** 2).item())
+        # Mirror the training stage-2 loss: use V·ψ(Z_val) as features,
+        # not φ(A_val). φ(A_val) would condition on the confounded treatment,
+        # which biases early stopping toward the confounded fit.
+        psi_tr = model.features_psi(z_tr_full, w_tr_full, l_tr_full)
+        phi_tr = model.features_phi(a_tr_full)
+        xi_tr = model.features_xi(w_tr_full, l_tr_full)
+        V = model.compute_V(psi_tr, phi_tr)
+        mu = model.compute_mu(V, psi_tr, xi_tr, y_tr_full)
+        psi_v = model.features_psi(z_val, w_val, l_val)
+        xi_v = model.features_xi(w_val, l_val)
+        V_psi_v = (V @ psi_v.transpose(0, 1)).transpose(0, 1)
+        X_v = model.batch_outer_vec(V_psi_v, xi_v)
+        pred = X_v @ mu
+        return float(torch.mean((y_val.reshape(-1) - pred) ** 2).item())
 
     for ep in range(1, epochs + 1):
         ep_psi = ep_xi = ep_phi = 0.0
@@ -1061,10 +1110,13 @@ def train_dfiv(
         batch_size_eval: int = 2048,
     ) -> np.ndarray:
         preds: list[np.ndarray] = []
-        n_eval = int(np.asarray(a_eval).reshape(-1).shape[0])
+        n_eval = int(np.asarray(a_eval).shape[0])
         for lo in range(0, n_eval, batch_size_eval):
             hi = min(lo + batch_size_eval, n_eval)
-            a_b = torch.as_tensor(a_eval[lo:hi].reshape(-1, 1), dtype=torch.float32, device=device)
+            a_slice = a_eval[lo:hi]
+            if a_slice.ndim == 1:
+                a_slice = a_slice.reshape(-1, 1)
+            a_b = torch.as_tensor(a_slice, dtype=torch.float32, device=device)
             w_b = torch.as_tensor(w_eval[lo:hi], dtype=torch.float32, device=device)
             l_b = torch.as_tensor(l_eval[lo:hi], dtype=torch.float32, device=device)
             preds.append(model.predict(a_b, w_b, l_b).detach().cpu().numpy().reshape(-1))
@@ -1072,9 +1124,12 @@ def train_dfiv(
 
     if has_external_val:
         if treatment_family == "binary":
-            a_cal = np.asarray(a_val_raw, dtype=np.float32).reshape(-1)
+            a_cal_arr = np.asarray(a_val_raw, dtype=np.float32)
+            if a_cal_arr.ndim == 1:
+                a_cal_arr = a_cal_arr.reshape(-1, 1)
+            a_cal = a_cal_arr
         else:
-            a_cal = ((np.asarray(a_val_raw).reshape(-1) - a_mean) / a_std).astype(np.float32)
+            a_cal = ((np.asarray(a_val_raw) - a_mean) / a_std).astype(np.float32)
         w_cal = ((np.asarray(w_val_raw) - w_mean) / w_std).astype(np.float32)
         l_cal = ((np.asarray(l_val_raw) - l_mean) / l_std).astype(np.float32)
         y_cal = ((np.asarray(y_val_raw).reshape(-1) - y_mean) / y_std).astype(np.float32)
@@ -1497,7 +1552,9 @@ def _npiv_train_mse(
 ) -> float:
     """Original-scale in-sample response MSE used for restart selection."""
     model.eval()
-    a_n = ((a - norms["a_mean"]) / norms["a_std"]).astype(np.float32).reshape(-1, 1)
+    a_n = ((a - norms["a_mean"]) / norms["a_std"]).astype(np.float32)
+    if a_n.ndim == 1:
+        a_n = a_n.reshape(-1, 1)
     w_n = ((w - norms["w_mean"]) / norms["w_std"]).astype(np.float32)
     l_n = ((l - norms["l_mean"]) / norms["l_std"]).astype(np.float32)
     y = np.asarray(y, dtype=np.float32).reshape(-1)
@@ -1551,10 +1608,10 @@ def fit_npiv(
     """
     z_np = z_tr.numpy()
     w_np = w_tr.numpy()
-    a_np = train_raw["A"].reshape(-1)
+    a_np = train_raw["A"]
     l_np = train_raw["L"]
     y_np = train_raw["Y"].reshape(-1, 1)
-    a_val_np = None if val_raw is None else val_raw["A"].reshape(-1)
+    a_val_np = None if val_raw is None else val_raw["A"]
     l_val_np = None if val_raw is None else val_raw["L"]
     y_val_np = None if val_raw is None else val_raw["Y"].reshape(-1, 1)
     w_val_np = None if w_val is None else w_val.numpy()
@@ -1642,6 +1699,16 @@ def fit_npiv(
                 log_every=max(1, dfiv_epochs // 10),
                 lr_phi=float(args.dfiv_lr_phi),
                 weight_decay=float(args.dfiv_weight_decay),
+                weight_decay_psi=(
+                    float(args.dfiv_weight_decay_psi)
+                    if getattr(args, "dfiv_weight_decay_psi", None) is not None
+                    else None
+                ),
+                weight_decay_phi=(
+                    float(args.dfiv_weight_decay_phi)
+                    if getattr(args, "dfiv_weight_decay_phi", None) is not None
+                    else None
+                ),
                 val_frac=float(getattr(args, "dfiv_val_frac", 0.1)),
                 patience=int(getattr(args, "dfiv_patience", 20)),
                 normalize_wl=bool(args.npiv_normalize_wl),

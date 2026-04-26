@@ -42,10 +42,18 @@ def _norm_wl_tensor(
     return (x.to(device) - mean_t) / std_t
 
 
+def _make_a_input(a_val: float | np.ndarray, n: int) -> np.ndarray:
+    """Broadcast a scalar or vector treatment value to shape ``(n,)`` or ``(n, dA)``."""
+    a_arr = np.asarray(a_val, dtype=np.float64)
+    if a_arr.ndim == 0:
+        return np.full(n, float(a_arr), dtype=np.float64)
+    return np.broadcast_to(a_arr[None, :], (n, a_arr.shape[0])).copy()
+
+
 @torch.no_grad()
 def predict_hat_a(
     model: nn.Module,
-    a_val: float,
+    a_val: float | np.ndarray,
     w: Tensor,
     l: Tensor,
     device: torch.device,
@@ -53,17 +61,40 @@ def predict_hat_a(
 ) -> np.ndarray:
     """Return ``ĥ(a, W_i, L_i)`` on the original Y scale for all rows of ``w``.
 
-    ``norms`` must provide ``a_mean``, ``a_std``, ``y_mean``, ``y_std`` and
-    per-column ``w_mean/w_std``, ``l_mean/l_std``.
+    ``a_val`` may be a scalar (dA=1) or a 1-D array of shape ``(dA,)`` for
+    vector continuous treatment.  ``norms`` must provide ``a_mean``, ``a_std``,
+    ``y_mean``, ``y_std`` and per-column ``w_mean/w_std``, ``l_mean/l_std``.
     """
     model.eval()
     n = w.shape[0]
     treatment_family = str(norms.get("treatment_family", "continuous"))
+    a_mean = np.asarray(norms["a_mean"], dtype=np.float64).ravel()
+
     if treatment_family == "binary":
-        a_norm = float(a_val)
+        a_val_arr = np.asarray(a_val, dtype=np.float64).ravel()
+        if a_val_arr.size > 1:
+            a_tensor = torch.as_tensor(
+                np.broadcast_to(a_val_arr[None, :], (n, a_val_arr.size)).copy(),
+                dtype=torch.float32,
+            ).to(device)
+        else:
+            a_tensor = torch.full((n, 1), float(a_val_arr[0]), dtype=torch.float32, device=device)
+    elif a_mean.size > 1:
+        # vector continuous treatment
+        a_std = np.asarray(norms["a_std"], dtype=np.float64).ravel()
+        a_val_np = np.asarray(a_val, dtype=np.float64).ravel()
+        a_norm = (a_val_np - a_mean) / a_std  # (dA,)
+        a_tensor = torch.as_tensor(
+            np.broadcast_to(a_norm[None, :], (n, a_norm.shape[0])).copy(),
+            dtype=torch.float32,
+        ).to(device)
     else:
-        a_norm = (a_val - norms["a_mean"]) / norms["a_std"]
-    a_tensor = torch.full((n, 1), a_norm, dtype=torch.float32, device=device)
+        # scalar continuous treatment
+        a_norm = (float(np.asarray(a_val).flat[0]) - float(a_mean[0])) / float(
+            np.asarray(norms["a_std"]).ravel()[0]
+        )
+        a_tensor = torch.full((n, 1), float(a_norm), dtype=torch.float32, device=device)
+
     w_n = _norm_wl_tensor(w, norms["w_mean"], norms["w_std"], device)
     l_n = _norm_wl_tensor(l, norms["l_mean"], norms["l_std"], device)
     pred_norm = model.predict(a_tensor, w_n, l_n)
@@ -84,7 +115,7 @@ def predict_hat_a(
 def hat_contrast_matrix(
     model: nn.Module,
     a_grid: np.ndarray,
-    a_ref: float,
+    a_ref: float | np.ndarray,
     w: Tensor,
     l: Tensor,
     device: torch.device,
@@ -92,39 +123,43 @@ def hat_contrast_matrix(
 ) -> np.ndarray:
     """Per-unit fitted contrasts ``τ̂[i, g] = ĥ(a_g, W_i, L_i) − ĥ(a_ref, W_i, L_i)``.
 
-    Shape ``(n_units, len(a_grid))``.
+    ``a_ref`` may be a scalar (dA=1) or a 1-D array of shape ``(dA,)`` for
+    vector continuous treatment.  ``a_grid`` rows must be consistent (scalars
+    or ``(dA,)`` arrays).  Shape ``(n_units, len(a_grid))``.
     """
     n = w.shape[0]
     g = len(a_grid)
     hat = np.zeros((n, g), dtype=np.float64)
     ref = predict_hat_a(model, a_ref, w, l, device, norms)
     for j, av in enumerate(a_grid):
-        hat[:, j] = predict_hat_a(model, float(av), w, l, device, norms) - ref
+        hat[:, j] = predict_hat_a(model, av, w, l, device, norms) - ref
     return hat
 
 
 def true_contrast_matrix(
     a_grid: np.ndarray,
-    a_ref: float,
+    a_ref: float | np.ndarray,
     l_all: np.ndarray,
     h0_fn: Callable[[np.ndarray, np.ndarray], np.ndarray],
 ) -> np.ndarray:
     """Per-unit truth contrasts ``τ[i, g] = h₀(a_g, L_i) − h₀(a_ref, L_i)``.
 
-    ``h0_fn(a_vec, l_rows)`` must accept a length-``n`` treatment vector and
-    the ``(n, l_dim)`` covariate block, returning the length-``n`` structural
-    mean.  Shape ``(n_units, len(a_grid))``.
+    ``h0_fn(a_arr, l_rows)`` must accept an ``(n,)`` or ``(n, dA)`` treatment
+    array and the ``(n, l_dim)`` covariate block, returning the length-``n``
+    structural mean.  ``a_ref`` / each row of ``a_grid`` may be scalar or a
+    ``(dA,)`` vector for vector continuous treatment.
+    Shape ``(n_units, len(a_grid))``.
     """
     l_all = np.asarray(l_all, dtype=np.float64)
     n = l_all.shape[0]
     g = len(a_grid)
     out = np.zeros((n, g), dtype=np.float64)
     h_ref = np.asarray(
-        h0_fn(np.full(n, float(a_ref), dtype=np.float64), l_all), dtype=np.float64,
+        h0_fn(_make_a_input(a_ref, n), l_all), dtype=np.float64,
     ).ravel()
     for j, av in enumerate(a_grid):
         h_a = np.asarray(
-            h0_fn(np.full(n, float(av), dtype=np.float64), l_all), dtype=np.float64,
+            h0_fn(_make_a_input(av, n), l_all), dtype=np.float64,
         ).ravel()
         out[:, j] = h_a - h_ref
     return out
@@ -423,24 +458,51 @@ def build_counterfactual_eval(
     Returns
     -------
     ``(a_ref, a_grid, tau_pop_true)``
-        * ``a_ref`` — float reference treatment.
-        * ``a_grid`` — ``(cf_grid_n,)`` float64 intervention grid.
+        * ``a_ref`` — float (scalar A) or ``(dA,)`` array (vector A) reference treatment.
+        * ``a_grid`` — ``(cf_grid_n,)`` float64 array for scalar A, or
+          ``(cf_grid_n, dA)`` array for vector A.
         * ``tau_pop_true`` — ``(cf_grid_n,)`` population mean contrast curve.
     """
-    a_pop_1d = np.asarray(a_pop, dtype=np.float64).reshape(-1)
-    if a_pop_1d.size == 0:
+    a_pop_arr = np.asarray(a_pop, dtype=np.float64)
+    if a_pop_arr.ndim == 1:
+        a_pop_arr = a_pop_arr.reshape(-1, 1)
+    if a_pop_arr.shape[0] == 0:
         raise ValueError("build_counterfactual_eval: a_pop is empty.")
+    dA = a_pop_arr.shape[1]
 
     if str(treatment_type) == "binary":
-        a_ref = float(a_ref_override) if a_ref_override is not None else 0.0
-        a_grid = np.asarray([0.0, 1.0], dtype=np.float64)
+        if dA == 1:
+            a_ref: float | np.ndarray = float(a_ref_override) if a_ref_override is not None else 0.0
+            a_grid = np.asarray([0.0, 1.0], dtype=np.float64)
+        else:
+            import itertools as _itertools
+            a_ref = np.zeros(dA, dtype=np.float64)
+            a_grid = np.array(
+                list(_itertools.product([0.0, 1.0], repeat=dA)), dtype=np.float64,
+            )  # (2^dA, dA)
+    elif dA > 1:
+        # vector continuous treatment: sweep along PC1 of the treatment distribution
+        a_ref_vec = a_pop_arr.mean(axis=0)  # (dA,)
+        a_centered = a_pop_arr - a_ref_vec[None, :]
+        cov = a_centered.T @ a_centered / max(a_pop_arr.shape[0] - 1, 1)
+        _, eigvecs = np.linalg.eigh(cov)
+        pc1 = eigvecs[:, -1]  # (dA,) — direction of largest variance
+        proj = a_centered @ pc1  # (n_pop,) — projections onto PC1
+        lo = float(np.percentile(proj, cf_a_pctl_low))
+        hi = float(np.percentile(proj, cf_a_pctl_high))
+        if lo >= hi:
+            lo, hi = float(proj.min()), float(proj.max())
+        alphas = np.linspace(lo, hi, int(cf_grid_n), dtype=np.float64)
+        a_grid = a_ref_vec[None, :] + alphas[:, None] * pc1[None, :]  # (cf_grid_n, dA)
+        a_ref = a_ref_vec  # (dA,)
     else:
+        # scalar continuous treatment
+        a_pop_1d = a_pop_arr.reshape(-1)
         a_ref = (
             float(a_ref_override)
             if a_ref_override is not None
             else float(a_pop_1d.mean())
         )
-
         lo = float(np.percentile(a_pop_1d, cf_a_pctl_low))
         hi = float(np.percentile(a_pop_1d, cf_a_pctl_high))
         if lo >= hi:

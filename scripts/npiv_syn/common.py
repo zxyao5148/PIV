@@ -58,6 +58,7 @@ def npiv_syn_fingerprint_extra(args: argparse.Namespace) -> dict:
         "design_seed": int(args.design_seed),
         "data_seed": int(args.data_seed),
         "treatment_type": str(args.treatment_type),
+        "dA": int(getattr(args, "dA", 1)),
     }
 
 
@@ -88,7 +89,7 @@ def build_dims(raw: dict[str, np.ndarray]) -> IVDims:
         m_dim=int(raw["M"].shape[1]),
         w_dim=int(raw["C"].shape[1]),
         z_dim=int(raw["V"].shape[1]),
-        a_dim=1,
+        a_dim=int(raw["A"].shape[1]),
         l_dim=int(raw["L"].shape[1]),
         y_dim=1,
     )
@@ -116,6 +117,7 @@ def build_npiv_syn_bundle(args: argparse.Namespace) -> dict[str, object]:
         dD=int(args.dD),
         dL=args.dL,
         dM=args.dM,
+        dA=int(getattr(args, "dA", 1)),
         sigma_m=float(args.sigma_m),
         sigma_a=float(args.sigma_a),
         sigma_y=float(args.sigma_y),
@@ -170,18 +172,20 @@ def build_iv_checkpoint_path(
     data_seed: int,
     train_seed: int,
     method: str,
+    dA: int = 1,
     run_tag: str = "",
 ) -> Path | None:
     """Canonical IV checkpoint path for one synthetic `(surface, seeds, method)`."""
     if ckpt_root is None:
         return None
+    da_suffix = f"_dA{int(dA)}" if int(dA) > 1 else ""
     stem = (
         f"surf_{surface}"
         f"_{treatment_type}"
         f"_design{int(design_seed)}"
         f"_data{int(data_seed)}"
         f"_train{int(train_seed)}"
-        f"_{method_tag(method)}_iv.pt"
+        f"_{method_tag(method)}{da_suffix}_iv.pt"
     )
     if str(run_tag).strip():
         stem = stem[:-3] + f"_{str(run_tag).strip()}.pt"
@@ -199,19 +203,21 @@ def build_npiv_checkpoint_path(
     method: str,
     downstream: str,
     oracle_c: bool = False,
+    dA: int = 1,
     run_tag: str = "",
 ) -> Path | None:
     """Canonical NPIV checkpoint path for one synthetic `(surface, seeds, combo)`."""
     if ckpt_root is None:
         return None
     oracle_suffix = "_oracleC" if oracle_c else ""
+    da_suffix = f"_dA{int(dA)}" if int(dA) > 1 else ""
     stem = (
         f"surf_{surface}"
         f"_{treatment_type}"
         f"_design{int(design_seed)}"
         f"_data{int(data_seed)}"
         f"_train{int(train_seed)}"
-        f"_{method_tag(method)}_{downstream}{oracle_suffix}_npiv.pt"
+        f"_{method_tag(method)}_{downstream}{oracle_suffix}{da_suffix}_npiv.pt"
     )
     if str(run_tag).strip():
         stem = stem[:-3] + f"_{str(run_tag).strip()}.pt"
@@ -227,16 +233,18 @@ def artifact_stem(
     train_seed: int,
     method: str,
     downstream: str,
+    dA: int = 1,
     run_tag: str = "",
 ) -> str:
     """Filename stem shared by figures, summaries, and NPZ artifacts."""
+    da_suffix = f"_dA{int(dA)}" if int(dA) > 1 else ""
     stem = (
         f"surf_{surface}"
         f"_{treatment_type}"
         f"_design{int(design_seed)}"
         f"_data{int(data_seed)}"
         f"_train{int(train_seed)}"
-        f"_{method_tag(method)}_{downstream}"
+        f"_{method_tag(method)}_{downstream}{da_suffix}"
     )
     if str(run_tag).strip():
         stem = f"{stem}_{str(run_tag).strip()}"
@@ -336,6 +344,7 @@ def build_npiv_syn_eval_setup(
         dD=int(args.dD),
         dL=args.dL,
         dM=args.dM,
+        dA=int(getattr(args, "dA", 1)),
         sigma_m=float(args.sigma_m),
         sigma_a=float(args.sigma_a),
         sigma_y=float(args.sigma_y),
@@ -353,7 +362,7 @@ def build_npiv_syn_eval_setup(
     override = str(getattr(args, "contrast_ref_a", "")).strip()
     a_ref_override = float(override) if override else None
     a_ref, a_grid, tau_pop_true = build_counterfactual_eval(
-        np.asarray(raw["A"], dtype=np.float64).reshape(-1),
+        np.asarray(raw["A"], dtype=np.float64),
         np.asarray(raw["L"], dtype=np.float64),
         h0_fn,
         treatment_type=treatment_type,
@@ -364,7 +373,7 @@ def build_npiv_syn_eval_setup(
     )
     pop_l = np.asarray(raw["L"], dtype=np.float64)
     return {
-        "a_ref": float(a_ref),
+        "a_ref": a_ref,  # float (scalar) or (dA,) array (vector continuous)
         "a_grid": a_grid,
         "tau_pop_true": tau_pop_true,
         "h0_fn": h0_fn,
@@ -379,11 +388,14 @@ def discover_available_train_seeds(
     treatment_type: str,
     design_seed: int,
     data_seed: int,
+    dA: int = 1,
 ) -> list[int]:
     """Find which train_seeds have at least one IV checkpoint for this scenario."""
+    da_suffix = f"_dA{int(dA)}" if int(dA) > 1 else ""
     pattern = re.compile(
         rf"^surf_{re.escape(surface)}_{re.escape(treatment_type)}"
-        rf"_design{int(design_seed)}_data{int(data_seed)}_train(\d+)_.+_iv\.pt$"
+        rf"_design{int(design_seed)}_data{int(data_seed)}_train(\d+)_"
+        rf".+{re.escape(da_suffix)}_iv\.pt$"
     )
     seeds: set[int] = set()
     prefix = (

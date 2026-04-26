@@ -346,6 +346,8 @@ def fingerprint_npiv(
     fp["dfiv_lr_phi"] = float(args.dfiv_lr_phi)
     fp["dfiv_batch_size"] = int(args.dfiv_batch_size)
     fp["dfiv_weight_decay"] = float(args.dfiv_weight_decay)
+    fp["dfiv_weight_decay_psi"] = float(args.dfiv_weight_decay_psi) if getattr(args, "dfiv_weight_decay_psi", None) is not None else None
+    fp["dfiv_weight_decay_phi"] = float(args.dfiv_weight_decay_phi) if getattr(args, "dfiv_weight_decay_phi", None) is not None else None
     fp["dfiv_val_frac"] = float(getattr(args, "dfiv_val_frac", 0.1))
     fp["dfiv_patience"] = int(getattr(args, "dfiv_patience", 20))
     fp["npiv_normalize_wl"] = bool(args.npiv_normalize_wl)
