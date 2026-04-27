@@ -15,7 +15,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config.model_configs import add_model_config_arguments, configured_model_args
 from evaluation import (
-    contrast_mse,
+    contrast_error,
+    contrast_metric_label,
     hat_contrast_matrix,
     hat_contrast_surface,
     probe_wz_to_target_r2,
@@ -130,6 +131,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--surface-l1-hi", type=float, default=10.0, dest="surface_l1_hi")
     parser.add_argument("--probe-epochs", type=int, default=200, dest="probe_epochs")
     parser.add_argument("--probe-lr", type=float, default=1e-3, dest="probe_lr")
+    parser.add_argument(
+        "--mse-scale",
+        type=str,
+        default="var",
+        choices=["raw", "var", "mean_sq", "range_sq"],
+        dest="mse_scale",
+        help="Scale for contrast error reporting; default is variance-normalized nMSE.",
+    )
     parser.add_argument(
         "--probe-targets", nargs="+", default=["V", "D"], dest="probe_targets",
         choices=["V", "D", "C", "U"],
@@ -363,7 +372,11 @@ def evaluate_seed_checkpoint_bundle(
                 device,
                 norms,
             )
-            mse_map[(method, downstream)] = contrast_mse(tau_hat, true_tau)
+            mse_map[(method, downstream)] = contrast_error(
+                tau_hat,
+                true_tau,
+                scale=args.mse_scale,
+            )
             pop_hat_store[(seed, method, downstream)] = [tau_hat.mean(axis=0)]
             unit_hat[(seed, method, downstream)] = np.asarray(
                 tau_hat[:, unit_plot_index],
@@ -466,12 +479,14 @@ def report_rho_metrics(
     methods: list[str],
     downstreams: list[str],
     probe_targets: list[str],
+    mse_scale: str,
 ) -> None:
     """Print per-rho MSE and probe summaries."""
+    metric_label = contrast_metric_label(mse_scale)
     seeds = aggregated["seeds"]
     print(f"\n{'=' * 72}")
     print(
-        f"[rho={rho:g}] Unit-level treatment contrast MSE  "
+        f"[rho={rho:g}] Unit-level treatment contrast {metric_label}  "
         f"(mean +- sd over seeds={seeds})",
     )
     print(f"Reference a0 = {aggregated['a_ref']:.6f}")
@@ -608,6 +623,7 @@ def main() -> None:
             methods=methods,
             downstreams=downstreams,
             probe_targets=probe_targets,
+            mse_scale=str(args.mse_scale),
         )
         max_seed_count = max(max_seed_count, len(seeds))
         for (method, downstream), vals in aggregated["mse_store"].items():
@@ -623,7 +639,8 @@ def main() -> None:
             )
 
     print(f"\n{'=' * 72}")
-    print("Cross-rho unit-level contrast MSE  (mean +- sd over selected seeds)")
+    metric_label = contrast_metric_label(args.mse_scale)
+    print(f"Cross-rho unit-level contrast {metric_label}  (mean +- sd over selected seeds)")
     print(f"{'=' * 72}")
     for rho in heatmap_rhos:
         for method in methods:

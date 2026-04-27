@@ -132,7 +132,13 @@ def parse_args() -> argparse.Namespace:
         default=str(PROJECT_ROOT / "outputs" / "checkpoints" / "npiv_syn"),
         dest="checkpoint_dir",
     )
-    parser.add_argument("--oracle-c", action="store_true", dest="oracle_c")
+    parser.add_argument(
+        "--oracle-c",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        dest="oracle_c",
+        help="Use oracle C as W for non-PIV methods (default: on).",
+    )
     parser.add_argument("--force-retrain", action="store_true", dest="force_retrain")
     return parser.parse_args()
 

@@ -34,11 +34,11 @@ vector:
       treatment_hidden_dims: [256, 256]
       activation: relu
     binary:
-      s1_epochs: 600
-      s2_epochs: 900
-      s1_patience: 180
-      s2_patience: 260
-      lr: 0.00025
+      s1_epochs: 320
+      s2_epochs: 520
+      s1_patience: 120
+      s2_patience: 180
+      lr: 0.00035
       encoder_hidden_dims: [384, 384, 384]
       score_hidden_dims: [320, 320]
       treatment_hidden_dims: [320, 320]

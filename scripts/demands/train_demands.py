@@ -16,7 +16,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config.model_configs import add_model_config_arguments, configured_model_args
 from evaluation import (
-    contrast_mse,
+    contrast_error,
+    contrast_metric_label,
     hat_contrast_matrix,
     probe_w_to_target_r2,
     probe_wz_to_target_r2,
@@ -78,7 +79,13 @@ def parse_args() -> argparse.Namespace:
         "--downstream", nargs="+", default=["deepiv", "dfiv"],
         choices=["deepiv", "dfiv"],
     )
-    parser.add_argument("--oracle-c", action="store_true", dest="oracle_c")
+    parser.add_argument(
+        "--oracle-c",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        dest="oracle_c",
+        help="Use oracle C as W for non-PIV methods (default: on).",
+    )
     add_model_config_arguments(
         parser,
         include_iv_representation=True,
@@ -88,6 +95,14 @@ def parse_args() -> argparse.Namespace:
     # ── Reporting ───────────────────────────────────────────────────
     parser.add_argument("--probe-epochs", type=int, default=200, dest="probe_epochs")
     parser.add_argument("--probe-lr", type=float, default=1e-3, dest="probe_lr")
+    parser.add_argument(
+        "--mse-scale",
+        type=str,
+        default="var",
+        choices=["raw", "var", "mean_sq", "range_sq"],
+        dest="mse_scale",
+        help="Scale for contrast error reporting; default is variance-normalized nMSE.",
+    )
 
     # ── Checkpointing ───────────────────────────────────────────────
     parser.add_argument(
@@ -146,6 +161,7 @@ def execute_single_run(
     )
 
     mse_by_key: dict[tuple[str, str], float] = {}
+    metric_label = contrast_metric_label(args.mse_scale)
     probe_by_method: dict[tuple[str, str], float] = {}
     for method in list(dict.fromkeys(args.methods)):
         model_args = configured_model_args(
@@ -280,14 +296,14 @@ def execute_single_run(
                 device,
                 norms,
             )
-            mse = contrast_mse(tau_hat, true_tau)
+            mse = contrast_error(tau_hat, true_tau, scale=args.mse_scale)
             mse_by_key[(method, downstream)] = float(mse)
-            print(f"       contrast MSE = {mse:.6f}")
+            print(f"       contrast {metric_label} = {mse:.6f}")
 
     print(f"\n{'=' * 72}")
     print(
         f"[rho={args.rho:g}, seed={args.seed}] "
-        "Unit-level treatment contrast MSE  E[(tau_hat-tau)^2]",
+        f"Unit-level treatment contrast {metric_label}",
     )
     print(f"Reference a0 = {a_ref:.6f}")
     print(f"{'=' * 72}")

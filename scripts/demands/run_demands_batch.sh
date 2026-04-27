@@ -242,10 +242,7 @@ SUM_ARGS=(
   --checkpoint-dir "${CHECKPOINT_DIR}"
   --out-fig "${OUT_FIG}"
 )
-SUM_RHO_SEED_COUNT=0
-if [[ ${#SUM_RHO_SEEDS[@]:-} -gt 0 ]]; then
-  SUM_RHO_SEED_COUNT=${#SUM_RHO_SEEDS[@]}
-fi
+SUM_RHO_SEED_COUNT=${#SUM_RHO_SEEDS[@]}
 if [[ -z "${SUM_RHO}" && -z "${SUM_RHO_LIST_CSV}" && "${SUM_RHO_SEED_COUNT}" -eq 0 ]]; then
   # Default summary scope to the same rhos we just trained so the
   # aggregator always has an explicit rho selection.

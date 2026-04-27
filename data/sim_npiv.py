@@ -120,6 +120,11 @@ class SimConfig:
     alpha0_range: tuple[float, float] = (-0.5, 0.5)
     alpha_range: tuple[float, float] = (-1.0, 1.0)
     gamma_u_range: tuple[float, float] = (1.0, 2.0)
+    # Simulator invariance knob: keep confounder contribution scale stable as dC changes.
+    # When enabled, each row of alphaC is rescaled to the expected L2 norm for
+    # ``alphaC_scale_ref_dim`` under ``alpha_range``.
+    alphaC_enforce_invariant_scale: bool = True
+    alphaC_scale_ref_dim: int = 2
 
     # Minimum marginal confounding correlation rho = gamma_u / sqrt(IV_var + gamma_u² + sigma_a²)
     # for continuous treatment.  rho < threshold → treatment theta rejected.
@@ -183,6 +188,8 @@ class SimConfig:
             raise ValueError("binary_max_joint_cell_prob_p95 must be in [0, 1].")
         if self.min_continuous_confound_ratio < 0.0:
             raise ValueError("min_continuous_confound_ratio must be nonnegative.")
+        if self.alphaC_scale_ref_dim < 1:
+            raise ValueError("alphaC_scale_ref_dim must be positive.")
 
 
 @dataclass
@@ -432,11 +439,33 @@ def sample_proxy_measurements(C: np.ndarray, rng: Generator, dgp: DGPDefinition,
     return C @ dgp.proxy_loading.T + eps_m
 
 
+def _expected_uniform_second_moment(low: float, high: float) -> float:
+    """Return E[X^2] for X ~ Uniform(low, high)."""
+    lo = float(low)
+    hi = float(high)
+    return float((lo * lo + lo * hi + hi * hi) / 3.0)
+
+
+def _rescale_rows_to_l2_norm(mat: np.ndarray, target_norm: float, eps: float = 1e-12) -> np.ndarray:
+    """Rescale each row of `mat` to have approximately `target_norm` L2 norm."""
+    arr = np.asarray(mat, dtype=float).copy()
+    row_norms = np.linalg.norm(arr, axis=1, keepdims=True)
+    safe = np.maximum(row_norms, float(eps))
+    arr *= float(target_norm) / safe
+    return arr
+
+
 def propose_treatment_theta(rng: Generator, cfg: SimConfig) -> TreatmentTheta:
+    alphaC = _uniform_vec(rng, (cfg.dA if cfg.dA > 1 else 1, cfg.dC), *cfg.alpha_range)
+    if bool(cfg.alphaC_enforce_invariant_scale):
+        e_x2 = _expected_uniform_second_moment(float(cfg.alpha_range[0]), float(cfg.alpha_range[1]))
+        target = math.sqrt(float(cfg.alphaC_scale_ref_dim) * max(e_x2, 0.0))
+        alphaC = _rescale_rows_to_l2_norm(alphaC, target_norm=target)
+
     if cfg.dA > 1:
         return TreatmentTheta(
             alpha0=_uniform_vec(rng, (cfg.dA,), *cfg.alpha0_range),
-            alphaC=_uniform_vec(rng, (cfg.dA, cfg.dC), *cfg.alpha_range),
+            alphaC=alphaC,
             alphaL=_uniform_vec(rng, (cfg.dA, cfg.dL), *cfg.alpha_range),
             gamma_u=_uniform_vec(rng, (cfg.dA,), *cfg.gamma_u_range),
             B=_uniform_vec(rng, (cfg.dA, cfg.dV), *cfg.alpha_range),
@@ -444,7 +473,7 @@ def propose_treatment_theta(rng: Generator, cfg: SimConfig) -> TreatmentTheta:
         )
     return TreatmentTheta(
         alpha0=np.asarray([_scalar_uniform(rng, *cfg.alpha0_range)], dtype=float),
-        alphaC=_uniform_vec(rng, (1, cfg.dC), *cfg.alpha_range),
+        alphaC=alphaC,
         alphaL=_uniform_vec(rng, (1, cfg.dL), *cfg.alpha_range),
         gamma_u=np.asarray([_scalar_uniform(rng, *cfg.gamma_u_range)], dtype=float),
         b0=_uniform_vec(rng, (cfg.dV,), *cfg.alpha_range),
