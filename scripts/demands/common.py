@@ -25,7 +25,17 @@ from trainer import load_iv_representation, train_iv_representation  # noqa: E40
 from utils import IVDims, make_eval_loaders, method_tag  # noqa: E402
 
 DEMANDS_DIMS = IVDims(x_dim=3, m_dim=1, w_dim=1, z_dim=1, a_dim=1, l_dim=2, y_dim=1)
-ALL_METHODS = ["PIV", "ZNet", "AutoIV", "VIV", "DIV.VAE", "TrueIV", "NoneIV"]
+ALL_METHODS = [
+    "PIV",
+    "Proxy-Orth",
+    "Conf-Orth",
+    "ZNet",
+    "AutoIV",
+    "VIV",
+    "DIV.VAE",
+    "TrueIV",
+    "NoneIV",
+]
 
 
 def demands_h0(a: np.ndarray, l: np.ndarray) -> np.ndarray:

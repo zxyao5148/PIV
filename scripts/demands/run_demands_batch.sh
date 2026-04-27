@@ -200,9 +200,11 @@ run_worker() {
     log_path="${LOG_DIR}/run_demands_rho${rho_tag}_seed${seed}.log"
     echo "=== worker device=${DEVICE}${gpu_id:+ gpu=${gpu_id}}: train_demands rho=${rho} seed=${seed} -> ${log_path}"
 
+    # Line-buffer Python stdout/stderr so tee'd per-job logs update live (pipe is non-TTY).
     if [[ "${DEVICE}" == "cuda" ]]; then
       CUDA_VISIBLE_DEVICES="${gpu_id}" \
-        "${PYTHON_BIN}" "${ROOT_DIR}/scripts/demands/train_demands.py" \
+        PYTHONUNBUFFERED=1 \
+        "${PYTHON_BIN}" -u "${ROOT_DIR}/scripts/demands/train_demands.py" \
         --seed "${seed}" \
         --rho "${rho}" \
         --checkpoint-dir "${CHECKPOINT_DIR}" \
@@ -210,7 +212,8 @@ run_worker() {
         --device cuda \
         2>&1 | tee "${log_path}"
     else
-      "${PYTHON_BIN}" "${ROOT_DIR}/scripts/demands/train_demands.py" \
+      PYTHONUNBUFFERED=1 \
+        "${PYTHON_BIN}" -u "${ROOT_DIR}/scripts/demands/train_demands.py" \
         --seed "${seed}" \
         --rho "${rho}" \
         --checkpoint-dir "${CHECKPOINT_DIR}" \

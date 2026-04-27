@@ -1,4 +1,4 @@
-npiv_restarts: 2
+npiv_restarts: 1
 npiv_normalize_wl: true
 dfiv_epochs: 1000
 dfiv_feature_dim: 32

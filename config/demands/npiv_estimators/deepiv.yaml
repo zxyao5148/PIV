@@ -1,4 +1,4 @@
-npiv_restarts: 2
+npiv_restarts: 1
 npiv_normalize_wl: true
 deepiv_epochs: 500
 deepiv_num_components: 5
