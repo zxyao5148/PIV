@@ -11,14 +11,14 @@ scalar:
       treatment_hidden_dims: [128, 128]
       activation: relu
     binary:
-      s1_epochs: 200
-      s2_epochs: 400
-      s1_patience: 50
-      s2_patience: 80
-      lr: 0.0007
-      encoder_hidden_dims: [256, 256]
-      score_hidden_dims: [128, 128]
-      treatment_hidden_dims: [128, 128]
+      s1_epochs: 320
+      s2_epochs: 640
+      s1_patience: 90
+      s2_patience: 150
+      lr: 0.0004
+      encoder_hidden_dims: [320, 320]
+      score_hidden_dims: [192, 192]
+      treatment_hidden_dims: [192, 192]
       activation: relu
 
 vector:
@@ -34,12 +34,12 @@ vector:
       treatment_hidden_dims: [256, 256]
       activation: relu
     binary:
-      s1_epochs: 300
-      s2_epochs: 500
-      s1_patience: 80
-      s2_patience: 100
-      lr: 0.0007
-      encoder_hidden_dims: [256, 256, 256]
-      score_hidden_dims: [256, 256]
-      treatment_hidden_dims: [256, 256]
+      s1_epochs: 600
+      s2_epochs: 900
+      s1_patience: 180
+      s2_patience: 260
+      lr: 0.00025
+      encoder_hidden_dims: [384, 384, 384]
+      score_hidden_dims: [320, 320]
+      treatment_hidden_dims: [320, 320]
       activation: relu

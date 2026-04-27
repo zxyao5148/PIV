@@ -39,19 +39,46 @@ scalar:
       deepiv_response_hidden: 384
       deepiv_num_samples: 32
       deepiv_patience: 60
-    newey_powell:
-      deepiv_epochs: 300
-      deepiv_response_hidden: 384
-      deepiv_num_samples: 32
-      deepiv_patience: 60
+    soft_threshold:
+      deepiv_epochs: 260
+      deepiv_treatment_hidden: 128
+      deepiv_response_hidden: 320
+      deepiv_num_layers: 2
+      deepiv_num_components: 4
+      deepiv_num_samples: 48
+      deepiv_lr: 0.00025
+      deepiv_weight_decay: 0.0002
+      deepiv_min_scale: 0.01
+      deepiv_patience: 70
+    bump_local:
+      deepiv_epochs: 260
+      deepiv_treatment_hidden: 128
+      deepiv_response_hidden: 320
+      deepiv_num_layers: 2
+      deepiv_num_components: 4
+      deepiv_num_samples: 48
+      deepiv_lr: 0.00025
+      deepiv_weight_decay: 0.0002
+      deepiv_min_scale: 0.01
+      deepiv_patience: 70
     binary_linear:
-      deepiv_epochs: 250
+      deepiv_epochs: 300
+      deepiv_treatment_hidden: 96
       deepiv_response_hidden: 256
-      deepiv_patience: 50
+      deepiv_num_layers: 2
+      deepiv_num_samples: 24
+      deepiv_lr: 0.0004
+      deepiv_weight_decay: 0.0001
+      deepiv_patience: 80
     binary_threshold_modulated:
-      deepiv_epochs: 250
-      deepiv_response_hidden: 256
-      deepiv_patience: 50
+      deepiv_epochs: 320
+      deepiv_treatment_hidden: 96
+      deepiv_response_hidden: 320
+      deepiv_num_layers: 2
+      deepiv_num_samples: 24
+      deepiv_lr: 0.0004
+      deepiv_weight_decay: 0.0001
+      deepiv_patience: 90
 
 vector:
   treatment_types:
@@ -90,16 +117,43 @@ vector:
     varying_slope:
       deepiv_epochs: 180
       deepiv_patience: 50
-    newey_powell:
-      deepiv_epochs: 180
-      deepiv_patience: 50
+    soft_threshold:
+      deepiv_epochs: 260
+      deepiv_treatment_hidden: 192
+      deepiv_response_hidden: 384
+      deepiv_num_layers: 2
+      deepiv_num_components: 6
+      deepiv_num_samples: 64
+      deepiv_lr: 0.00025
+      deepiv_weight_decay: 0.0002
+      deepiv_min_scale: 0.01
+      deepiv_patience: 80
+    bump_local:
+      deepiv_epochs: 420
+      deepiv_treatment_hidden: 256
+      deepiv_response_hidden: 512
+      deepiv_num_layers: 2
+      deepiv_num_components: 8
+      deepiv_num_samples: 192
+      deepiv_lr: 0.0002
+      deepiv_weight_decay: 0.0001
+      deepiv_min_scale: 0.01
+      deepiv_patience: 140
     binary_linear:
-      deepiv_epochs: 200
-      deepiv_patience: 50
+      deepiv_epochs: 180
+      deepiv_treatment_hidden: 128
+      deepiv_response_hidden: 256
+      deepiv_num_layers: 2
+      deepiv_num_samples: 24
+      deepiv_lr: 0.00025
+      deepiv_weight_decay: 0.0002
+      deepiv_patience: 55
     binary_threshold_modulated:
       deepiv_epochs: 320
       deepiv_treatment_hidden: 192
       deepiv_response_hidden: 512
       deepiv_num_layers: 3
       deepiv_num_samples: 48
-      deepiv_patience: 80
+      deepiv_lr: 0.0003
+      deepiv_weight_decay: 0.00012
+      deepiv_patience: 100

@@ -16,7 +16,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from config.model_configs import add_model_config_arguments, configured_model_args
 from evaluation import (  # noqa: E402
     build_counterfactual_eval,
-    contrast_mse,
+    contrast_error,
+    contrast_metric_label,
     hat_contrast_matrix,
     probe_w_to_target_r2,
     probe_wz_to_target_r2,
@@ -48,7 +49,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="poly",
         choices=[
-            "poly", "varying_slope", "newey_powell",
+            "poly", "varying_slope", "soft_threshold", "bump_local",
             "binary_linear", "binary_threshold_modulated",
         ],
     )
@@ -71,8 +72,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dM", type=int, default=None)
     parser.add_argument("--dA", type=int, default=1)
     parser.add_argument("--sigma-m", type=float, default=0.50, dest="sigma_m")
-    parser.add_argument("--sigma-a", type=float, default=1.00, dest="sigma_a")
-    parser.add_argument("--sigma-y", type=float, default=1.00, dest="sigma_y")
+    parser.add_argument("--sigma-a", type=float, default=0.50, dest="sigma_a")
+    parser.add_argument("--sigma-y", type=float, default=0.50, dest="sigma_y")
 
     parser.add_argument("--batch-size", type=int, default=256, dest="batch_size")
     parser.add_argument("--train-frac", type=float, default=0.70, dest="train_frac")
@@ -116,6 +117,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cf-grid-n", type=int, default=25, dest="cf_grid_n")
     parser.add_argument("--cf-a-pctl-low", type=float, default=5.0, dest="cf_a_pctl_low")
     parser.add_argument("--cf-a-pctl-high", type=float, default=95.0, dest="cf_a_pctl_high")
+    parser.add_argument(
+        "--mse-scale",
+        type=str,
+        default="var",
+        choices=["raw", "var", "mean_sq", "range_sq"],
+        dest="mse_scale",
+        help="Scale for contrast error reporting; default is variance-normalized nMSE.",
+    )
     # ── Checkpointing ──────────────────────────────────────────────
     parser.add_argument(
         "--checkpoint-dir",
@@ -191,6 +200,7 @@ def main() -> None:
 
     mse_by_key: dict[tuple[str, str], float] = {}
     tau_hat_by_key: dict[tuple[str, str], np.ndarray] = {}
+    metric_label = contrast_metric_label(args.mse_scale)
     probe_by_method: dict[tuple[str, str], float] = {}
 
     for method in list(dict.fromkeys(args.methods)):
@@ -338,16 +348,16 @@ def main() -> None:
                 device,
                 norms,
             )
-            mse = contrast_mse(tau_hat, true_tau)
+            mse = contrast_error(tau_hat, true_tau, scale=args.mse_scale)
             mse_by_key[(method, downstream)] = float(mse)
             tau_hat_by_key[(method, downstream)] = tau_hat
-            print(f"       contrast MSE = {mse:.6f}")
+            print(f"       contrast {metric_label} = {mse:.6f}")
 
     print(f"\n{'=' * 72}")
     print(
         f"[surface={args.surface}, design={args.design_seed}, "
         f"data={args.data_seed}, train={args.train_seed}] "
-        "Unit-level treatment contrast MSE  E[(tau_hat-tau)^2]",
+        f"Unit-level treatment contrast {metric_label}",
     )
     print(f"Reference a0 = {a_ref_str}")
     print(f"{'=' * 72}")

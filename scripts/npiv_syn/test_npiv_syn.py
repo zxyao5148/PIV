@@ -15,7 +15,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config.model_configs import add_model_config_arguments, configured_model_args
 from evaluation import (
-    contrast_mse,
+    contrast_error,
+    contrast_metric_label,
     hat_contrast_matrix,
     hat_contrast_surface,
     probe_w_to_target_r2,
@@ -141,6 +142,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cf-grid-n", type=int, default=25, dest="cf_grid_n")
     parser.add_argument("--cf-a-pctl-low", type=float, default=5.0, dest="cf_a_pctl_low")
     parser.add_argument("--cf-a-pctl-high", type=float, default=95.0, dest="cf_a_pctl_high")
+    parser.add_argument(
+        "--mse-scale",
+        type=str,
+        default="var",
+        choices=["raw", "var", "mean_sq", "range_sq"],
+        dest="mse_scale",
+        help="Scale for contrast error reporting; default is variance-normalized nMSE.",
+    )
     parser.add_argument("--unit-plot-grid-index", type=int, default=-1, dest="unit_plot_grid_index")
     parser.add_argument("--unit-plot-bins", type=int, default=40, dest="unit_plot_bins")
 
@@ -364,7 +373,7 @@ def evaluate_train_seed_bundle(
                 fingerprint_extra=fp_extra,
             )
             tau_hat = hat_contrast_matrix(model, a_grid, a_ref, w_te, l_te, device, norms)
-            mse = contrast_mse(tau_hat, true_tau)
+            mse = contrast_error(tau_hat, true_tau, scale=args.mse_scale)
             mse_map[(method, downstream)] = mse
             pop_hat_store[(train_seed, method, downstream)] = [tau_hat.mean(axis=0)]
             unit_hat[(train_seed, method, downstream)] = np.asarray(
@@ -461,6 +470,7 @@ def report_scenario_metrics(
     methods: list[str],
     downstreams: list[str],
     probes: list[str],
+    mse_label: str,
 ) -> None:
     seeds = aggregated["train_seeds"]
     a_ref = aggregated["a_ref"]
@@ -471,7 +481,7 @@ def report_scenario_metrics(
     print(f"\n{'=' * 72}")
     print(
         f"[surface={surface}  treatment={treatment_type}] "
-        "Unit-level contrast MSE  (mean ± sd over seeds)",
+        f"Unit-level contrast {mse_label}  (mean ± sd over seeds)",
     )
     print(f"Reference a0 = {a_ref_str}")
     print(f"{'=' * 72}")
@@ -630,6 +640,7 @@ def render_scenario_figures(
 def main() -> None:
     args = parse_args()
     device = torch.device(args.device)
+    mse_label = contrast_metric_label(args.mse_scale)
 
     ckpt_root = Path(args.checkpoint_dir).expanduser().resolve()
     if not ckpt_root.exists():
@@ -674,6 +685,7 @@ def main() -> None:
         report_scenario_metrics(
             surface, treatment_type, aggregated,
             methods=methods, downstreams=downstreams, probes=args.probes,
+            mse_label=mse_label,
         )
         max_seed_count_by_tt[treatment_type] = max(
             max_seed_count_by_tt.get(treatment_type, 0), len(train_seeds),
@@ -698,6 +710,7 @@ def main() -> None:
             mse_store=mse_keyed,
             n_seeds=max_seed_count_by_tt.get(treatment_type, 1),
             treatment_type=treatment_type,
+            metric_label=mse_label,
         )
 
 

@@ -170,6 +170,56 @@ def contrast_mse(tau_hat: np.ndarray, tau_true: np.ndarray) -> float:
     return float(np.mean((np.asarray(tau_hat) - np.asarray(tau_true)) ** 2))
 
 
+def contrast_scale_denom(
+    tau_true: np.ndarray,
+    *,
+    scale: str = "var",
+    eps: float = 1e-12,
+) -> float:
+    """Return denominator used to normalize contrast MSE.
+
+    Supported ``scale`` values:
+    - ``"raw"``: no normalization (denominator 1.0)
+    - ``"var"``: variance of ``tau_true``
+    - ``"mean_sq"``: mean squared magnitude ``E[tau_true^2]``
+    - ``"range_sq"``: squared range ``(max-min)^2``
+    """
+    tau = np.asarray(tau_true, dtype=np.float64).ravel()
+    scale_key = str(scale).lower()
+    if scale_key == "raw":
+        return 1.0
+    if scale_key == "var":
+        denom = float(np.var(tau))
+    elif scale_key == "mean_sq":
+        denom = float(np.mean(tau ** 2))
+    elif scale_key == "range_sq":
+        denom = float((np.max(tau) - np.min(tau)) ** 2)
+    else:
+        raise ValueError(f"Unknown contrast MSE normalization scale: {scale!r}")
+    return max(denom, float(eps))
+
+
+def contrast_metric_label(scale: str = "var") -> str:
+    """Human-readable label for the configured contrast error metric."""
+    scale_key = str(scale).lower()
+    if scale_key == "raw":
+        return "MSE(raw)"
+    return f"nMSE({scale_key})"
+
+
+def contrast_error(
+    tau_hat: np.ndarray,
+    tau_true: np.ndarray,
+    *,
+    scale: str = "var",
+    eps: float = 1e-12,
+) -> float:
+    """Contrast prediction error on either raw or normalized scale."""
+    raw = contrast_mse(tau_hat, tau_true)
+    denom = contrast_scale_denom(tau_true, scale=scale, eps=eps)
+    return float(raw / denom)
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Contrast-surface evaluation (τ on an (A, L_vary) mesh, other L + W marginalised)
 # ═══════════════════════════════════════════════════════════════════
@@ -599,7 +649,10 @@ def probe_z_to_target_r2(
 
 __all__ = [
     "build_counterfactual_eval",
+    "contrast_error",
+    "contrast_metric_label",
     "contrast_mse",
+    "contrast_scale_denom",
     "hat_contrast_matrix",
     "hat_contrast_surface",
     "predict_hat_a",

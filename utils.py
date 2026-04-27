@@ -375,7 +375,10 @@ def load_npiv_norms(raw: object) -> dict:
     """Canonicalise on-disk NPIV normalisation stats into a dict of typed arrays."""
     if isinstance(raw, dict):
         out = dict(raw)
-        for k in ("a_mean", "a_std", "y_mean", "y_std"):
+        # a_mean/a_std can be scalar (dA=1) or vector (dA>1).
+        for k in ("a_mean", "a_std"):
+            out[k] = np.asarray(out[k], dtype=np.float32)
+        for k in ("y_mean", "y_std"):
             out[k] = float(out[k])
         for k in ("w_mean", "w_std", "l_mean", "l_std"):
             out[k] = np.asarray(out[k], dtype=np.float32)

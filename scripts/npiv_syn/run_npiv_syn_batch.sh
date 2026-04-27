@@ -84,7 +84,7 @@ IFS=',' read -r -a GPU_IDS <<< "${GPU_IDS_CSV}"
 
 get_surfaces_for_type() {
   case "$1" in
-    continuous) echo "poly varying_slope newey_powell" ;;
+    continuous) echo "poly varying_slope soft_threshold bump_local" ;;
     binary)     echo "binary_linear binary_threshold_modulated" ;;
     *)          echo "" ;;
   esac
@@ -124,15 +124,15 @@ LOCK_FILE="$(mktemp "${TMPDIR:-/tmp}/run_npiv_syn_lock.XXXXXX")"
 cleanup() { rm -f "${JOB_FILE}" "${LOCK_FILE}"; }
 trap cleanup EXIT
 
-for treatment_type in "${TREATMENT_TYPES[@]}"; do
-  if [[ -n "${EXPLICIT_SURFACE}" ]]; then
-    surfaces=("${EXPLICIT_SURFACE}")
-  else
-    IFS=' ' read -r -a surfaces <<< "$(get_surfaces_for_type "${treatment_type}")"
-  fi
-  for surface in "${surfaces[@]}"; do
-    for dA in "${DA_VALUES[@]}"; do
-      for seed in "${SEEDS[@]}"; do
+for seed in "${SEEDS[@]}"; do
+  for treatment_type in "${TREATMENT_TYPES[@]}"; do
+    if [[ -n "${EXPLICIT_SURFACE}" ]]; then
+      surfaces=("${EXPLICIT_SURFACE}")
+    else
+      IFS=' ' read -r -a surfaces <<< "$(get_surfaces_for_type "${treatment_type}")"
+    fi
+    for surface in "${surfaces[@]}"; do
+      for dA in "${DA_VALUES[@]}"; do
         printf '%s %s %s %s\n' "${treatment_type}" "${surface}" "${dA}" "${seed}" >> "${JOB_FILE}"
       done
     done

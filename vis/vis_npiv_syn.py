@@ -89,6 +89,76 @@ def save_npiv_syn_contrast_surface(
     plt.close(fig)
 
 
+def save_npiv_syn_marginalized_response(
+    out_path: Path,
+    *,
+    a_grid: np.ndarray,
+    h_true: np.ndarray,
+    h_hat: np.ndarray,
+    method: str,
+    downstream: str,
+    surface: str,
+    design_seed: int,
+    data_seed: int,
+    train_seed: int,
+    level_mse: float | None = None,
+) -> None:
+    """Sample-average structural curve μ(a) ≈ E_L[h(a, L)] on the test set (scalar a)."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    a_grid = np.asarray(a_grid, dtype=np.float64)
+    h_true = np.asarray(h_true, dtype=np.float64)
+    h_hat = np.asarray(h_hat, dtype=np.float64)
+
+    fig, ax = plt.subplots(figsize=(8.2, 5.0), constrained_layout=True)
+    ax.plot(a_grid, h_true, color="black", lw=2.4, label=r"Truth $\bar h(a)$")
+    ax.plot(a_grid, h_hat, color="#d55e00", lw=2.0, label=rf"Estimate $\hat{{\bar h}}(a)$")
+    mse_note = "" if level_mse is None else f"  level MSE={level_mse:.4f}"
+    ax.set_xlabel("Treatment A")
+    ax.set_ylabel(r"Marginal response $\bar h(a) = \mathbb{E}_i[h(a, L_i)]$")
+    ax.set_title(
+        f"Synthetic NPIV marginalized response — {method} + {downstream}\n"
+        f"surface={surface}  "
+        f"design={design_seed}  data={data_seed}  train={train_seed}{mse_note}",
+    )
+    ax.legend(loc="best")
+    fig.savefig(out_path, dpi=160)
+    plt.close(fig)
+
+
+def save_npiv_syn_overlay_marginalized_response(
+    out_path: Path,
+    *,
+    a_grid: np.ndarray,
+    h_true: np.ndarray,
+    h_hat_by_label: dict[str, np.ndarray],
+    downstream: str,
+    surface: str,
+    design_seed: int,
+    data_seed: int,
+    train_seed: int,
+) -> None:
+    """Overlay μ̂(a) for several IV methods (same downstream estimator); one truth curve."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    a_grid = np.asarray(a_grid, dtype=np.float64)
+    h_true = np.asarray(h_true, dtype=np.float64)
+    palette = plt.cm.tab10(np.linspace(0, 0.9, max(10, len(h_hat_by_label))))
+
+    fig, ax = plt.subplots(figsize=(8.6, 5.2), constrained_layout=True)
+    ax.plot(a_grid, h_true, color="black", lw=2.6, label=r"Truth $\bar h(a)$")
+    for idx, (label, h_hat) in enumerate(h_hat_by_label.items()):
+        arr = np.asarray(h_hat, dtype=np.float64)
+        ax.plot(a_grid, arr, lw=2.0, color=palette[idx], label=label)
+    ax.set_xlabel("Treatment A")
+    ax.set_ylabel(r"$\bar h(a)$")
+    ax.set_title(
+        f"Marginalized response overlay — {downstream}  surface={surface}\n"
+        f"design={design_seed}  data={data_seed}  train={train_seed}",
+    )
+    ax.legend(loc="best", fontsize=9)
+    fig.savefig(out_path, dpi=160)
+    plt.close(fig)
+
+
 def save_npiv_syn_population_contrast(
     out_path: Path,
     *,
@@ -521,6 +591,7 @@ def save_mse_heatmap(
     mse_store: dict[tuple[str, str, str], list[float]],
     n_seeds: int,
     treatment_type: str,
+    metric_label: str = "MSE",
     filename_template: str = "npiv_syn_mse_heatmap_{ds}.png",
 ) -> None:
     """Heatmap of unit-level contrast MSE: rows=surfaces, cols=methods, one fig per downstream."""
@@ -554,9 +625,9 @@ def save_mse_heatmap(
         ax.set_xlabel("IV method")
         ax.set_ylabel("Surface")
         ax.set_title(
-            f"NPIV-syn MSE ({treatment_type}) — {ds}  (mean n_seeds={n_seeds})",
+            f"NPIV-syn {metric_label} ({treatment_type}) — {ds}  (mean n_seeds={n_seeds})",
         )
-        fig.colorbar(im, ax=ax, fraction=0.046, label="MSE")
+        fig.colorbar(im, ax=ax, fraction=0.046, label=metric_label)
 
         denom = max(vmax - vmin, 1e-12)
         for i in range(len(surfaces)):
@@ -580,6 +651,8 @@ __all__ = [
     "save_binary_cate_curves",
     "save_mse_heatmap",
     "save_npiv_syn_contrast_surface",
+    "save_npiv_syn_marginalized_response",
+    "save_npiv_syn_overlay_marginalized_response",
     "save_npiv_syn_population_contrast",
     "save_population_contrast_figures",
     "save_probe_figure",
