@@ -148,8 +148,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for rho in "${RHOS[@]}"; do
-  for seed in "${SEEDS[@]}"; do
+# Order jobs by seed: for each seed, run all rhos (seed 1 → all ρ, then seed 2 → all ρ, …).
+for seed in "${SEEDS[@]}"; do
+  for rho in "${RHOS[@]}"; do
     printf '%s %s\n' "${rho}" "${seed}" >> "${JOB_FILE}"
   done
 done

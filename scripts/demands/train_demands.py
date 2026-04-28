@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pop-n", type=int, default=200_000, dest="pop_n")
     parser.add_argument("--pop-seed", type=int, default=20250101, dest="pop_seed")
     parser.add_argument("--coef-eps-a", type=float, default=1.0, dest="coef_eps_a")
-    parser.add_argument("--coef-u-outcome", type=float, default=100.0, dest="coef_u_outcome")
+    parser.add_argument("--coef-u-outcome", type=float, default=10.0, dest="coef_u_outcome")
     parser.add_argument("--coef-v-treatment", type=float, default=1.0, dest="coef_v_treatment")
     parser.add_argument("--coef-c-treatment", type=float, default=1.0, dest="coef_c_treatment")
     parser.add_argument("--coef-c-outcome", type=float, default=1.0, dest="coef_c_outcome")
