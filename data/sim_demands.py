@@ -34,6 +34,8 @@ class DemandsConfig:
     coef_eps_a: float = 1.5
     sigma_m: float = 0.5    # proxy noise scale
     sigma_x: float = 0.0    # optional isotropic noise on X after f (0 = deterministic f)
+    # Strength of instrument V in treatment equation.
+    coef_v_treatment: float = 1.0
     # Strength of confounder C and direct factor D in structural equations.
     coef_c_treatment: float = 1.0   # C enters A = … + coef_c_treatment * C + …
     coef_c_outcome: float = 1.0     # C enters Y = … + coef_c_outcome * C + …
@@ -212,7 +214,8 @@ def simulate_demands(cfg: DemandsConfig | None = None) -> Dict[str, np.ndarray]:
     # Larger coef_eps_a × rho jointly strengthen endogeneity via the U–eps_A channel.
     cc = float(cfg.coef_c_treatment)
     ea = float(cfg.coef_eps_a)
-    A = (25.0 + (V + 3.0) * kap + cc * C + ea * eps_A).astype(np.float32)
+    cv = float(cfg.coef_v_treatment)
+    A = (25.0 + cv * (V + 3.0) * kap + cc * C + ea * eps_A).astype(np.float32)
 
     # ── Outcome: Y = … + coef_c_outcome * C + coef_d_outcome * D + coef_u_outcome * U
     cy = float(cfg.coef_c_outcome)

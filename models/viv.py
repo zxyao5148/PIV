@@ -45,11 +45,15 @@ class _GaussianEncoder(nn.Module):
         self.logvar_net = _MLP(in_dim, hidden_dims, latent_dim, activation)
 
     def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
-        return self.mu_net(x), self.logvar_net(x)
+        mu = self.mu_net(x)
+        # Keep latent scale bounded to avoid exploding KL/reparameterized samples.
+        logvar = self.logvar_net(x).clamp(min=-8.0, max=8.0)
+        return mu, logvar
 
     @staticmethod
     def reparameterise(mu: Tensor, logvar: Tensor) -> Tensor:
-        return mu + torch.randn_like(mu) * (0.5 * logvar).exp()
+        std = (0.5 * logvar).exp().clamp(max=10.0)
+        return mu + torch.randn_like(mu) * std
 
 
 def _pearson_abs(x: Tensor, y: Tensor) -> Tensor:

@@ -1506,7 +1506,13 @@ def train_iv_representation(
             **proxy_embed_kwargs(args, dims.m_dim),
         ).to(device)
         train_baseline(
-            viv, loaders.train, args.epochs, args.lr, device, label="VIV",
+            viv,
+            loaders.train,
+            args.epochs,
+            args.lr,
+            device,
+            label="VIV",
+            grad_clip=5.0,
         )
         c_tr, z_tr = extract_cz(viv, eval_ld.train, device)[:2]
         c_va, z_va = extract_cz(viv, eval_ld.val, device)[:2]

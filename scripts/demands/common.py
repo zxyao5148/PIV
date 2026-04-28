@@ -65,6 +65,10 @@ def build_eval_setup(
         rho=float(rho),
         coef_eps_a=float(args.coef_eps_a),
         coef_u_outcome=float(args.coef_u_outcome),
+        coef_v_treatment=float(getattr(args, "coef_v_treatment", 1.0)),
+        coef_c_treatment=float(getattr(args, "coef_c_treatment", 1.0)),
+        coef_c_outcome=float(getattr(args, "coef_c_outcome", 1.0)),
+        coef_d_outcome=float(getattr(args, "coef_d_outcome", 1.0)),
     )
     pop_raw = simulate_demands(pop_cfg)
     a_pop = np.asarray(pop_raw["A"], dtype=np.float64).reshape(-1)
@@ -130,6 +134,10 @@ def build_demands_loaders(
         rho=float(rho),
         coef_eps_a=float(args.coef_eps_a),
         coef_u_outcome=float(args.coef_u_outcome),
+        coef_v_treatment=float(getattr(args, "coef_v_treatment", 1.0)),
+        coef_c_treatment=float(getattr(args, "coef_c_treatment", 1.0)),
+        coef_c_outcome=float(getattr(args, "coef_c_outcome", 1.0)),
+        coef_d_outcome=float(getattr(args, "coef_d_outcome", 1.0)),
     )
     raw = simulate_demands(cfg)
     keys = ["X", "M", "A", "Y", "L", "C", "V", "D", "U"]
@@ -188,6 +196,10 @@ def demands_fingerprint_extra(args: argparse.Namespace) -> dict:
         "rho": float(args.rho),
         "coef_eps_a": float(args.coef_eps_a),
         "coef_u_outcome": float(args.coef_u_outcome),
+        "coef_v_treatment": float(getattr(args, "coef_v_treatment", 1.0)),
+        "coef_c_treatment": float(getattr(args, "coef_c_treatment", 1.0)),
+        "coef_c_outcome": float(getattr(args, "coef_c_outcome", 1.0)),
+        "coef_d_outcome": float(getattr(args, "coef_d_outcome", 1.0)),
     }
 
 
