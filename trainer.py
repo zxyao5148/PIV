@@ -35,7 +35,7 @@ from torch import Tensor, nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from synthetic_dataset import DataLoaderBundle
-from models.ablation import build_conf_orth, build_proxy_orth
+from models.ablation import build_proxy_orth
 from models.autoiv import build_autoiv
 from models.divvae import build_divvae
 from models.npiv_estimators import DeepIV, DFIV
@@ -275,87 +275,108 @@ def train_baseline(
             )
 
 
-def train_ablation(
+def train_proxy_orth(
     model: nn.Module,
     loader: DataLoader,
-    epochs: int,
+    s1_epochs: int,
+    s2_epochs: int,
     lr: float,
     device: torch.device,
     *,
-    ablation_kind: str,
     val_loader: DataLoader | None = None,
-    patience: int = 0,
+    s1_patience: int = 0,
+    s2_patience: int = 0,
     log_every: int = 20,
 ) -> None:
-    """Training loop for Proxy-Orth / Conf-Orth ablations."""
-    opt = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=lr)
-    model.train()
-    best_state: dict[str, Tensor] | None = None
-    best_val = float("inf")
-    bad_epochs = 0
-    for ep in range(1, epochs + 1):
-        epoch_loss = 0.0
-        for batch in loader:
-            x = batch["X"].to(device)
-            a = batch["A"].to(device)
-            l = (
-                batch["L"].to(device)
-                if "L" in batch
-                else empty_covariates(x.shape[0], device)
-            )
-            if ablation_kind == "proxy":
+    """Two-stage training loop for Proxy-Orth."""
+
+    def run_stage(
+        *,
+        stage: int,
+        epochs: int,
+        patience: int,
+        label: str,
+    ) -> None:
+        if epochs <= 0:
+            return
+        if stage == 1:
+            model.set_stage1_trainable()
+        else:
+            model.set_stage2_trainable()
+        opt = torch.optim.Adam(
+            [p for p in model.parameters() if p.requires_grad],
+            lr=lr,
+        )
+        model.train()
+        best_state: dict[str, Tensor] | None = None
+        best_val = float("inf")
+        bad_epochs = 0
+        for ep in range(1, epochs + 1):
+            epoch_loss = 0.0
+            for batch in loader:
+                x = batch["X"].to(device)
                 m = batch["M"].to(device)
-                out = model.compute_loss(x, m, l, a)
-            else:
-                out = model.compute_loss(x, l, a)
-            opt.zero_grad()
-            out.loss.backward()
-            opt.step()
-            epoch_loss += out.loss.item() * x.shape[0]
-        val_msg = ""
-        if val_loader is not None:
-            model.eval()
-            val_loss = 0.0
-            with torch.no_grad():
-                for batch in val_loader:
-                    x = batch["X"].to(device)
+                l = (
+                    batch["L"].to(device)
+                    if "L" in batch
+                    else empty_covariates(x.shape[0], device)
+                )
+                if stage == 1:
+                    out = model.compute_loss_stage1(x, m, l)
+                else:
                     a = batch["A"].to(device)
-                    l = (
-                        batch["L"].to(device)
-                        if "L" in batch
-                        else empty_covariates(x.shape[0], device)
-                    )
-                    if ablation_kind == "proxy":
+                    out = model.compute_loss_stage2(x, m, l, a)
+                opt.zero_grad()
+                out.loss.backward()
+                opt.step()
+                epoch_loss += out.loss.item() * x.shape[0]
+            val_msg = ""
+            if val_loader is not None:
+                model.eval()
+                val_loss = 0.0
+                with torch.no_grad():
+                    for batch in val_loader:
+                        x = batch["X"].to(device)
                         m = batch["M"].to(device)
-                        out = model.compute_loss(x, m, l, a)
-                    else:
-                        out = model.compute_loss(x, l, a)
-                    val_loss += out.loss.item() * x.shape[0]
-            val_loss = val_loss / len(val_loader.dataset)
-            val_msg = f"  val_loss={val_loss:.4f}"
-            if val_loss < best_val - 1e-6:
-                best_val = val_loss
-                best_state = {
-                    name: value.detach().cpu().clone()
-                    for name, value in model.state_dict().items()
-                }
-                bad_epochs = 0
-            else:
-                bad_epochs += 1
-            model.train()
-        if ep % log_every == 0 or ep == 1:
-            print(
-                f"  {ablation_kind.title()}-Orth  epoch {ep:3d}/{epochs}  "
-                f"loss={epoch_loss / len(loader.dataset):.4f}{val_msg}",
-            )
-        if val_loader is not None and patience > 0 and bad_epochs >= patience:
-            print(
-                f"  {ablation_kind.title()}-Orth  early stop at epoch {ep} "
-                f"(best_val={best_val:.4f}, patience={patience})",
-            )
-            break
-    if best_state is not None:
-        model.load_state_dict(best_state)
+                        l = (
+                            batch["L"].to(device)
+                            if "L" in batch
+                            else empty_covariates(x.shape[0], device)
+                        )
+                        if stage == 1:
+                            out = model.compute_loss_stage1(x, m, l)
+                        else:
+                            a = batch["A"].to(device)
+                            out = model.compute_loss_stage2(x, m, l, a)
+                        val_loss += out.loss.item() * x.shape[0]
+                val_loss = val_loss / len(val_loader.dataset)
+                val_msg = f"  val_loss={val_loss:.4f}"
+                if val_loss < best_val - 1e-6:
+                    best_val = val_loss
+                    best_state = {
+                        name: value.detach().cpu().clone()
+                        for name, value in model.state_dict().items()
+                    }
+                    bad_epochs = 0
+                else:
+                    bad_epochs += 1
+                model.train()
+            if ep % log_every == 0 or ep == 1:
+                print(
+                    f"  Proxy-Orth {label}  epoch {ep:3d}/{epochs}  "
+                    f"loss={epoch_loss / len(loader.dataset):.4f}{val_msg}",
+                )
+            if val_loader is not None and patience > 0 and bad_epochs >= patience:
+                print(
+                    f"  Proxy-Orth {label}  early stop at epoch {ep} "
+                    f"(best_val={best_val:.4f}, patience={patience})",
+                )
+                break
+        if best_state is not None:
+            model.load_state_dict(best_state)
+
+    run_stage(stage=1, epochs=s1_epochs, patience=s1_patience, label="stage 1")
+    run_stage(stage=2, epochs=s2_epochs, patience=s2_patience, label="stage 2")
 
 
 @torch.no_grad()
@@ -377,28 +398,6 @@ def extract_proxy_orth_wz(
         )
         out = model.forward(x, m, l)
         ws.append(out["x_hat"].cpu())
-        zs.append(out["z"].cpu())
-    return torch.cat(ws), torch.cat(zs)
-
-
-@torch.no_grad()
-def extract_conf_orth_wz(
-    model: nn.Module,
-    loader: DataLoader,
-    device: torch.device,
-) -> tuple[Tensor, Tensor]:
-    """Extract ``(W, Z)`` from Conf-Orth."""
-    model.eval()
-    ws, zs = [], []
-    for batch in loader:
-        x = batch["X"].to(device)
-        l = (
-            batch["L"].to(device)
-            if "L" in batch
-            else empty_covariates(x.shape[0], device)
-        )
-        out = model.forward(x, l)
-        ws.append(out["w"].cpu())
         zs.append(out["z"].cpu())
     return torch.cat(ws), torch.cat(zs)
 
@@ -1309,9 +1308,9 @@ def train_iv_representation(
     and any auxiliary collection go through ``eval_loaders`` (``shuffle=False``)
     so rows stay aligned with the canonical split ordering.
 
-    Supported methods: ``PIV``, ``Proxy-Orth``, ``Conf-Orth``, ``ZNet``,
-    ``AutoIV``, ``VIV``, ``DIV.VAE``, ``TrueIV`` (uses simulator ``C, V``),
-    and ``NoneIV`` (random noise).
+    Supported methods: ``PIV``, ``Proxy-Orth``, ``ZNet``, ``AutoIV``,
+    ``VIV``, ``DIV.VAE``, ``TrueIV`` (uses simulator ``C, V``), and
+    ``NoneIV`` (random noise).
     """
     eval_ld = (
         eval_loaders if eval_loaders is not None
@@ -1362,94 +1361,30 @@ def train_iv_representation(
             a_dim=dims.a_dim,
             treatment_family=treatment_family,
         ).to(device)
-        n_epochs = int(
-            getattr(args, "epochs", None)
-            or getattr(args, "s2_epochs", None)
-            or 200
-        )
-        train_ablation(
-            model,
-            loaders.train,
-            n_epochs,
-            base_lr,
-            device,
-            ablation_kind="proxy",
-            val_loader=eval_ld.val,
-            patience=int(getattr(args, "s2_patience", 0) or 0),
-        )
-        w_tr, z_tr = extract_proxy_orth_wz(model, eval_ld.train, device)
-        w_va, z_va = extract_proxy_orth_wz(model, eval_ld.val, device)
-        w_te, z_te = extract_proxy_orth_wz(model, eval_ld.test, device)
-        ckpt = make_iv_checkpoint(
-            method,
-            args,
-            seed,
-            {"state_dict": model.state_dict()},
-            fingerprint_extra=fingerprint_extra,
-        )
-        return (
-            w_tr.cpu(),
-            z_tr.cpu(),
-            w_va.cpu(),
-            z_va.cpu(),
-            w_te.cpu(),
-            z_te.cpu(),
-            ckpt,
-        )
-
-    if method == "Conf-Orth":
-        treatment_family = str(getattr(args, "treatment_type", "continuous"))
-        base_lr = float(getattr(args, "lr", 1e-3) or 1e-3)
-        piv_stage1 = build_proxyiv(
-            x_dim=dims.x_dim,
-            m_dim=dims.m_dim,
-            l_dim=dims.l_dim,
-            w_dim=dims.w_dim,
-            z_dim=dims.z_dim,
-            a_dim=dims.a_dim,
-            treatment_family=treatment_family,
-        ).to(device)
         s1_epochs = int(
             getattr(args, "s1_epochs", None)
             or getattr(args, "epochs", None)
             or 200
         )
-        train_stage1(
-            piv_stage1,
-            loaders.train,
-            s1_epochs,
-            base_lr,
-            device,
-            val_loader=eval_ld.val,
-            patience=int(getattr(args, "s1_patience", 0) or 0),
-        )
-        model = build_conf_orth(
-            x_dim=dims.x_dim,
-            l_dim=dims.l_dim,
-            w_dim=dims.w_dim,
-            z_dim=dims.z_dim,
-            a_dim=dims.a_dim,
-            treatment_family=treatment_family,
-        ).to(device)
-        model.load_stage1_encoder(piv_stage1.stage1, freeze=True)
-        n_epochs = int(
-            getattr(args, "epochs", None)
-            or getattr(args, "s2_epochs", None)
+        s2_epochs = int(
+            getattr(args, "s2_epochs", None)
+            or getattr(args, "epochs", None)
             or 200
         )
-        train_ablation(
+        train_proxy_orth(
             model,
             loaders.train,
-            n_epochs,
+            s1_epochs,
+            s2_epochs,
             base_lr,
             device,
-            ablation_kind="conf",
             val_loader=eval_ld.val,
-            patience=int(getattr(args, "s2_patience", 0) or 0),
+            s1_patience=int(getattr(args, "s1_patience", 0) or 0),
+            s2_patience=int(getattr(args, "s2_patience", 0) or 0),
         )
-        w_tr, z_tr = extract_conf_orth_wz(model, eval_ld.train, device)
-        w_va, z_va = extract_conf_orth_wz(model, eval_ld.val, device)
-        w_te, z_te = extract_conf_orth_wz(model, eval_ld.test, device)
+        w_tr, z_tr = extract_proxy_orth_wz(model, eval_ld.train, device)
+        w_va, z_va = extract_proxy_orth_wz(model, eval_ld.val, device)
+        w_te, z_te = extract_proxy_orth_wz(model, eval_ld.test, device)
         ckpt = make_iv_checkpoint(
             method,
             args,
@@ -1633,29 +1568,6 @@ def load_iv_representation(
         w_tr, z_tr = extract_proxy_orth_wz(model, eval_ld.train, device)
         w_va, z_va = extract_proxy_orth_wz(model, eval_ld.val, device)
         w_te, z_te = extract_proxy_orth_wz(model, eval_ld.test, device)
-        return (
-            w_tr.cpu(),
-            z_tr.cpu(),
-            w_va.cpu(),
-            z_va.cpu(),
-            w_te.cpu(),
-            z_te.cpu(),
-        )
-
-    if method == "Conf-Orth":
-        treatment_family = str(getattr(args, "treatment_type", "continuous"))
-        model = build_conf_orth(
-            x_dim=dims.x_dim,
-            l_dim=dims.l_dim,
-            w_dim=dims.w_dim,
-            z_dim=dims.z_dim,
-            a_dim=dims.a_dim,
-            treatment_family=treatment_family,
-        ).to(device)
-        model.load_state_dict(ckpt["payload"]["state_dict"])
-        w_tr, z_tr = extract_conf_orth_wz(model, eval_ld.train, device)
-        w_va, z_va = extract_conf_orth_wz(model, eval_ld.val, device)
-        w_te, z_te = extract_conf_orth_wz(model, eval_ld.test, device)
         return (
             w_tr.cpu(),
             z_tr.cpu(),
@@ -2055,12 +1967,12 @@ __all__ = [
     "load_npiv_checkpoint",
     "pretrain_znet_xty",
     "train_autoiv",
-    "train_ablation",
     "train_baseline",
     "train_deepiv",
     "train_dfiv",
     "train_giv",
     "train_iv_representation",
+    "train_proxy_orth",
     "train_stage1",
     "train_stage2",
 ]

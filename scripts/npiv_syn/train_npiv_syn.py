@@ -137,7 +137,7 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         dest="oracle_c",
-        help="Use oracle C as W for non-PIV methods (default: on).",
+        help="Use oracle C as W for methods without a learned W branch (default: on).",
     )
     parser.add_argument("--force-retrain", action="store_true", dest="force_retrain")
     return parser.parse_args()
@@ -243,7 +243,7 @@ def main() -> None:
             fingerprint_extra=fp_extra,
         )
 
-        if args.oracle_c and method != "PIV":
+        if args.oracle_c and method not in {"PIV", "Proxy-Orth"}:
             assert oracle_c_tr is not None
             w_tr = oracle_c_tr
             w_va = oracle_c_va

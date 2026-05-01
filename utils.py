@@ -199,8 +199,11 @@ def proxy_embed_kwargs(args: argparse.Namespace, m_dim: int) -> dict:
 def npiv_w_dim(method: str, args: argparse.Namespace, dims: IVDims) -> int:
     """Input width of the NPIV structural net's confounder branch for *method*.
 
-    Accounts for the optional proxy-``M`` embedding for ZNet / AutoIV / VIV / DIV.VAE.
+    Accounts for Proxy-Orth exporting reconstructed ``X`` as ``W`` and for the
+    optional proxy-``M`` embedding for ZNet / AutoIV / VIV / DIV.VAE.
     """
+    if method == "Proxy-Orth":
+        return int(dims.x_dim)
     if method in ("ZNet", "AutoIV", "VIV", "DIV.VAE") and int(args.proxy_embed_dim) > 0:
         return int(dims.c_dim + int(args.proxy_embed_dim))
     return int(dims.c_dim)

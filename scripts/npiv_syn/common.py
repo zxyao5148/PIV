@@ -29,7 +29,16 @@ from synthetic_dataset import make_synthetic_proxyiv_dataloaders  # noqa: E402
 from trainer import load_iv_representation, train_iv_representation  # noqa: E402
 from utils import IVDims, make_eval_loaders, method_tag  # noqa: E402
 
-ALL_METHODS = ["PIV", "ZNet", "AutoIV", "VIV", "DIV.VAE", "TrueIV", "NoneIV"]
+ALL_METHODS = [
+    "PIV",
+    "Proxy-Orth",
+    "ZNet",
+    "AutoIV",
+    "VIV",
+    "DIV.VAE",
+    "TrueIV",
+    "NoneIV",
+]
 
 
 def attach_npiv_fingerprint_compat(args: argparse.Namespace) -> None:
@@ -212,7 +221,7 @@ def build_npiv_checkpoint_path(
     """Canonical NPIV checkpoint path for one synthetic `(surface, seeds, combo)`."""
     if ckpt_root is None:
         return None
-    oracle_suffix = "_oracleC" if oracle_c else ""
+    oracle_suffix = "_oracleC" if oracle_c and method not in {"PIV", "Proxy-Orth"} else ""
     da_suffix = f"_dA{int(dA)}" if int(dA) > 1 else ""
     stem = (
         f"surf_{surface}"

@@ -256,8 +256,8 @@ def _run_probes(
             r2 = probe_w_to_target_r2(w_tr_t, tgt_tr, w_te_t, tgt_te, **kw)
         elif label in ("Z->V", "Z->D"):
             r2 = probe_z_to_target_r2(z_tr_t, tgt_tr, z_te_t, tgt_te, **kw)
-        else:  # "(W,Z)->V": use W+Z for PIV, Z-only for all others
-            if method == "PIV":
+        else:  # "(W,Z)->V": use W+Z for methods with a learned W branch.
+            if method in {"PIV", "Proxy-Orth"}:
                 r2 = probe_wz_to_target_r2(w_tr_t, z_tr_t, tgt_tr, w_te_t, z_te_t, tgt_te, **kw)
             else:
                 r2 = probe_z_to_target_r2(z_tr_t, tgt_tr, z_te_t, tgt_te, **kw)
@@ -340,7 +340,7 @@ def evaluate_train_seed_bundle(
             allow_train=False, fingerprint_extra=fp_extra,
         )
 
-        if args.oracle_c and method != "PIV":
+        if args.oracle_c and method not in {"PIV", "Proxy-Orth"}:
             assert oracle_c_tr is not None
             w_tr = oracle_c_tr
             w_va = oracle_c_va

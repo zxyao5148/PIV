@@ -11,7 +11,6 @@ import yaml
 IV_REPRESENTATION_MODEL_MODULES = {
     "PIV": "piv",
     "Proxy-Orth": "proxy_orth",
-    "Conf-Orth": "conf_orth",
     "ZNet": "znet",
     "AutoIV": "autoiv",
     "VIV": "viv",

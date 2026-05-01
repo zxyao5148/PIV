@@ -285,7 +285,7 @@ def evaluate_seed_checkpoint_bundle(
             allow_train=False,
             fingerprint_extra=fp_extra,
         )
-        if args.oracle_c and method != "PIV":
+        if args.oracle_c and method not in {"PIV", "Proxy-Orth"}:
             assert (
                 oracle_c_tr is not None
                 and oracle_c_va is not None
@@ -302,7 +302,7 @@ def evaluate_seed_checkpoint_bundle(
         for target in args.probe_targets:
             tgt_tr = probe_train[target].to(torch.float32)
             tgt_te = probe_test[target].to(torch.float32)
-            if target == "D" or (target == "V" and method != "PIV"):
+            if target == "D" or (target == "V" and method not in {"PIV", "Proxy-Orth"}):
                 r2 = probe_z_to_target_r2(
                     z_tr_t,
                     tgt_tr,

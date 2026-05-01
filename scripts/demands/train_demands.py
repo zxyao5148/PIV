@@ -88,7 +88,7 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         dest="oracle_c",
-        help="Use oracle C as W for non-PIV methods (default: on).",
+        help="Use oracle C as W for methods without a learned W branch (default: on).",
     )
     add_model_config_arguments(
         parser,
@@ -193,7 +193,7 @@ def execute_single_run(
             fingerprint_extra=fp_extra,
         )
 
-        if model_args.oracle_c and method != "PIV":
+        if model_args.oracle_c and method not in {"PIV", "Proxy-Orth"}:
             assert (
                 oracle_c_tr is not None
                 and oracle_c_va is not None

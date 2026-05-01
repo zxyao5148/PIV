@@ -28,7 +28,6 @@ DEMANDS_DIMS = IVDims(x_dim=3, m_dim=1, w_dim=1, z_dim=1, a_dim=1, l_dim=2, y_di
 ALL_METHODS = [
     "PIV",
     "Proxy-Orth",
-    "Conf-Orth",
     "ZNet",
     "AutoIV",
     "VIV",
@@ -182,7 +181,7 @@ def build_npiv_checkpoint_path(
     """Canonical NPIV checkpoint path for one `(seed, rho, method, downstream)`."""
     if ckpt_root is None:
         return None
-    oracle_suffix = "_orc" if oracle_c and method != "PIV" else ""
+    oracle_suffix = "_orc" if oracle_c and method not in {"PIV", "Proxy-Orth"} else ""
     return (
         ckpt_root
         / f"s{seed}_rho{rho_tag(rho)}_{method_tag(method)}_{downstream}{oracle_suffix}_npiv.pt"
