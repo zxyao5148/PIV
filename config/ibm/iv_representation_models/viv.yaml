@@ -1,0 +1,15 @@
+# Training
+epochs: 200
+lr: 0.005
+proxy_embed_dim: 4
+
+# Architecture (2-layer encoders, 1-layer decoders)
+hidden_dim: 128
+activation: elu
+
+# Loss weights
+kl_weight: 0.1       # KL(q(z|x)||N(0,I)) + KL(q(c|x)||N(0,I))
+indep_weight: 1.0    # |Pearson(Z, C)|^2 independence penalty
+recon_a_weight: 1.0  # A reconstruction from (Z, C)
+recon_y_weight: 0.1  # Y reconstruction from (C, A)
+recon_x_weight: 0.1  # X reconstruction from (Z, C)

@@ -64,7 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-seed", type=int, default=1, dest="data_seed")
     parser.add_argument("--train-seed", type=int, default=1, dest="train_seed")
 
-    parser.add_argument("--n", type=int, default=8000)
+    parser.add_argument("--n", type=int, default=10000)
     parser.add_argument("--dC", type=int, default=2)
     parser.add_argument("--dV", type=int, default=2)
     parser.add_argument("--dD", type=int, default=2)

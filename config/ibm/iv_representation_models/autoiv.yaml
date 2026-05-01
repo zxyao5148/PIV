@@ -1,0 +1,34 @@
+# Training
+epochs: 400
+lr: 0.005
+proxy_embed_dim: 4
+
+# LR scheduling (StepLR applied to all three optimisers)
+lr_decay_step: 100
+lr_decay_rate: 0.95
+
+# Architecture (2-layer encoders, 1-layer heads)
+hidden_dim: 128
+activation: elu
+
+# MI density-fitting loss coefficients (loss_lld)
+coef_lld_za: 1.0   # MI(Z, A) density
+coef_lld_zy: 1.0   # MI(Z, Y) density
+coef_lld_ca: 1.0   # MI(C, A) density
+coef_lld_cy: 1.0   # MI(C, Y) density
+coef_lld_zc: 1.0   # MI(Z, C) density
+
+# MI bound loss coefficients (loss_bound, updates rep encoders)
+coef_bound_za: 1.0
+coef_bound_zy: 1.0
+coef_bound_ca: 1.0
+coef_bound_cy: 1.0
+coef_bound_zc: 1.0
+
+# Two-stage prediction loss coefficients (loss_2stage)
+coef_pred_t: 1.0   # treatment prediction
+coef_pred_y: 1.0   # outcome prediction
+
+# Regularisation
+coef_reg: 0.001    # L2 regularisation on representations / prediction nets
+sigma: 0.1         # RBF kernel bandwidth for conditional MI(Z, Y | A) weighting

@@ -7,6 +7,7 @@ LOG_DIR="${ROOT_DIR}/logs/run_npiv_syn"
 CHECKPOINT_DIR="${ROOT_DIR}/outputs/checkpoints/npiv_syn"
 SEEDS_CSV="$(seq -s, 1 10)"
 TREATMENT_TYPES_CSV="continuous,binary"
+SURFACES_CSV=""
 DA_VALUES_CSV="1"
 DESIGN_SEED=1
 GPU_IDS_CSV="0"
@@ -23,6 +24,8 @@ Options:
   --seeds CSV             Comma-separated seeds (used for both data_seed and train_seed).
                           Default: 1,2,3,4,5,6,7,8,9,10
   --treatment-types CSV   Comma-separated treatment types (continuous,binary). Default: both
+  --surfaces CSV          Comma-separated surfaces to run. When omitted, runs all surfaces
+                          compatible with each treatment type. Ignored if extra args include --surface.
   --da-values CSV         Comma-separated dA values. Default: 1
   --design-seed N         Fixed design seed. Default: 1
   --gpu-ids CSV           Physical CUDA GPU ids. Default: 0
@@ -54,6 +57,8 @@ while [[ $# -gt 0 ]]; do
       DA_VALUES_CSV="$2"; shift 2 ;;
     --treatment-types)
       TREATMENT_TYPES_CSV="$2"; shift 2 ;;
+    --surfaces)
+      SURFACES_CSV="$2"; shift 2 ;;
     --design-seed)
       DESIGN_SEED="$2"; shift 2 ;;
     --gpu-ids)
@@ -79,6 +84,7 @@ done
 
 IFS=',' read -r -a SEEDS <<< "${SEEDS_CSV}"
 IFS=',' read -r -a TREATMENT_TYPES <<< "${TREATMENT_TYPES_CSV}"
+IFS=',' read -r -a REQUESTED_SURFACES <<< "${SURFACES_CSV}"
 IFS=',' read -r -a DA_VALUES <<< "${DA_VALUES_CSV}"
 IFS=',' read -r -a GPU_IDS <<< "${GPU_IDS_CSV}"
 
@@ -87,6 +93,16 @@ get_surfaces_for_type() {
     continuous) echo "poly varying_slope soft_threshold bump_local" ;;
     binary)     echo "binary_linear binary_threshold_modulated" ;;
     *)          echo "" ;;
+  esac
+}
+
+surface_allowed_for_type() {
+  local treatment_type="$1"
+  local surface="$2"
+  case "${treatment_type}:${surface}" in
+    continuous:poly|continuous:varying_slope|continuous:soft_threshold|continuous:bump_local) return 0 ;;
+    binary:binary_linear|binary:binary_threshold_modulated) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -128,6 +144,13 @@ for seed in "${SEEDS[@]}"; do
   for treatment_type in "${TREATMENT_TYPES[@]}"; do
     if [[ -n "${EXPLICIT_SURFACE}" ]]; then
       surfaces=("${EXPLICIT_SURFACE}")
+    elif [[ -n "${SURFACES_CSV}" ]]; then
+      surfaces=()
+      for surface in "${REQUESTED_SURFACES[@]}"; do
+        if surface_allowed_for_type "${treatment_type}" "${surface}"; then
+          surfaces+=("${surface}")
+        fi
+      done
     else
       IFS=' ' read -r -a surfaces <<< "$(get_surfaces_for_type "${treatment_type}")"
     fi

@@ -1,0 +1,14 @@
+# Training (lr is capped to 1e-3 in the trainer; grad_clip=5.0 is applied)
+epochs: 200
+lr: 0.001
+proxy_embed_dim: 4
+
+# Architecture (2-layer encoders/decoder, 1-layer predictors)
+hidden_dim: 128
+activation: elu
+
+# Loss weights
+kl_weight: 0.1    # KL regularisation for Z and C encoders
+alpha_a: 20.0     # treatment prediction weight (Z, C) -> A
+alpha_y: 20.0     # outcome prediction weight C -> Y  (exclusion restriction)
+opr_weight: 1.0   # OPR: mean |cosine_sim(Z, C)| orthogonality penalty
