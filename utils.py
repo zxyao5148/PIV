@@ -301,6 +301,25 @@ def fingerprint_iv(
     return base
 
 
+def iv_fingerprint_equal(stored_fp: dict | None, expected_fp: dict) -> bool:
+    """``True`` if an on-disk IV ``fingerprint`` matches ``expected_fp``.
+
+    Older IBM checkpoints were written before ``surface`` was folded into the
+    dataset-specific fingerprint block; bridge that single-field omission so
+    evaluation scripts can load them when the shard path matches.
+    """
+    if stored_fp is None:
+        return False
+    if stored_fp == expected_fp:
+        return True
+    want_surf = expected_fp.get("surface")
+    if stored_fp.get("surface") is None and want_surf not in (None, ""):
+        bridged = dict(stored_fp)
+        bridged["surface"] = want_surf
+        return bridged == expected_fp
+    return False
+
+
 def fingerprint_npiv(
     args: argparse.Namespace,
     seed: int,
@@ -400,6 +419,7 @@ __all__ = [
     "extract_wz",
     "fingerprint_iv",
     "fingerprint_npiv",
+    "iv_fingerprint_equal",
     "load_checkpoint",
     "load_npiv_norms",
     "make_eval_loaders",

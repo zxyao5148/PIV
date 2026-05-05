@@ -481,9 +481,12 @@ def build_counterfactual_eval(
     Rules used:
 
     - ``a_ref = a_ref_override`` if provided, else ``mean(a_pop)``.
-    - ``a_grid = linspace(p_lo, p_hi, cf_grid_n)`` where ``p_lo`` / ``p_hi`` are
-      the ``cf_a_pctl_low`` / ``cf_a_pctl_high`` percentiles of ``a_pop``.
-      Falls back to ``[min, max]`` if the percentiles degenerate.
+    - Scalar treatment (``dA=1``): ``a_grid = linspace(p_lo, p_hi, cf_grid_n)``
+      with ``p_lo`` / ``p_hi`` from the corresponding percentiles of ``a_pop``.
+    - Vector continuous treatment (``dA>1``): construct a full Cartesian grid
+      using per-dimension percentile bounds; points per dimension are chosen so
+      total grid size is roughly ``cf_grid_n``.
+      Falls back to per-dimension ``[min, max]`` if percentile bounds degenerate.
     - ``τ̄_true(a) = mean_i [ h_0(a, L_i) − h_0(a_ref, L_i) ]`` over ``l_pop``.
 
     Parameters
@@ -503,14 +506,16 @@ def build_counterfactual_eval(
         Lower / upper percentiles of ``a_pop`` for the grid endpoints (default
         5th / 95th).
     cf_grid_n:
-        Number of evenly-spaced points in ``a_grid`` (default 25).
+        Grid-size control. For scalar treatment, this is the exact number of
+        points. For vector continuous treatment, the evaluator chooses roughly
+        this many total points via a Cartesian grid.
 
     Returns
     -------
     ``(a_ref, a_grid, tau_pop_true)``
         * ``a_ref`` — float (scalar A) or ``(dA,)`` array (vector A) reference treatment.
         * ``a_grid`` — ``(cf_grid_n,)`` float64 array for scalar A, or
-          ``(cf_grid_n, dA)`` array for vector A.
+          ``(n_grid, dA)`` array for vector A (Cartesian full grid).
         * ``tau_pop_true`` — ``(cf_grid_n,)`` population mean contrast curve.
     """
     a_pop_arr = np.asarray(a_pop, dtype=np.float64)
@@ -531,19 +536,23 @@ def build_counterfactual_eval(
                 list(_itertools.product([0.0, 1.0], repeat=dA)), dtype=np.float64,
             )  # (2^dA, dA)
     elif dA > 1:
-        # vector continuous treatment: sweep along PC1 of the treatment distribution
+        # vector continuous treatment: evaluate on a full Cartesian grid over all
+        # treatment dimensions (no PCA projection / slicing).
         a_ref_vec = a_pop_arr.mean(axis=0)  # (dA,)
-        a_centered = a_pop_arr - a_ref_vec[None, :]
-        cov = a_centered.T @ a_centered / max(a_pop_arr.shape[0] - 1, 1)
-        _, eigvecs = np.linalg.eigh(cov)
-        pc1 = eigvecs[:, -1]  # (dA,) — direction of largest variance
-        proj = a_centered @ pc1  # (n_pop,) — projections onto PC1
-        lo = float(np.percentile(proj, cf_a_pctl_low))
-        hi = float(np.percentile(proj, cf_a_pctl_high))
-        if lo >= hi:
-            lo, hi = float(proj.min()), float(proj.max())
-        alphas = np.linspace(lo, hi, int(cf_grid_n), dtype=np.float64)
-        a_grid = a_ref_vec[None, :] + alphas[:, None] * pc1[None, :]  # (cf_grid_n, dA)
+        lo_q = np.percentile(a_pop_arr, cf_a_pctl_low, axis=0).astype(np.float64)   # (dA,)
+        hi_q = np.percentile(a_pop_arr, cf_a_pctl_high, axis=0).astype(np.float64)   # (dA,)
+        valid = lo_q < hi_q
+        lo = np.where(valid, lo_q, np.min(a_pop_arr, axis=0))
+        hi = np.where(valid, hi_q, np.max(a_pop_arr, axis=0))
+
+        # Keep total grid size roughly near cf_grid_n while covering all dims.
+        points_per_dim = max(2, int(round(float(cf_grid_n) ** (1.0 / float(dA)))))
+        axes = [
+            np.linspace(float(lo[j]), float(hi[j]), points_per_dim, dtype=np.float64)
+            for j in range(dA)
+        ]
+        mesh = np.meshgrid(*axes, indexing="ij")
+        a_grid = np.stack([m.reshape(-1) for m in mesh], axis=1)  # (points_per_dim**dA, dA)
         a_ref = a_ref_vec  # (dA,)
     else:
         # scalar continuous treatment

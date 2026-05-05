@@ -5,8 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON_BIN="${PYTHON:-python}"
 LOG_DIR="${ROOT_DIR}/logs/run_ibm"
 CHECKPOINT_DIR="${ROOT_DIR}/outputs/checkpoints/ibm"
-SEEDS_CSV="$(seq -s, 1 10)"
-AUTOENC_SEED_OFFSET=0
+TRAIN_SEEDS_CSV="$(seq -s, 1 10)"
+DATA_SEED=1
+AUTOENC_SEED=1
 TREATMENT_TYPES_CSV="continuous,binary"
 SURFACES_CSV=""
 DA_VALUES_CSV="1"
@@ -22,9 +23,9 @@ Usage:
   scripts/ibm/run_ibm_batch.sh [options] [-- extra train_ibm args]
 
 Options:
-  --seeds CSV                 Comma-separated seeds. Used for data_seed and train_seed.
-                              Default: 1,2,3,4,5,6,7,8,9,10
-  --autoenc-seed-offset N     autoenc_seed = seed + offset. Default: 0
+  --seeds CSV                 Comma-separated train seeds. Default: 1,2,3,4,5,6,7,8,9,10
+  --data-seed N               Fixed data seed. Default: 1
+  --autoenc-seed N            Fixed autoencoder seed. Default: 1
   --treatment-types CSV       Comma-separated treatment types (continuous,binary). Default: both
   --surfaces CSV              Comma-separated surfaces to run. When omitted, runs all surfaces
                               compatible with each treatment type. Ignored if extra args include --surface.
@@ -55,9 +56,11 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --seeds|--train-seeds)
-      SEEDS_CSV="$2"; shift 2 ;;
-    --autoenc-seed-offset)
-      AUTOENC_SEED_OFFSET="$2"; shift 2 ;;
+      TRAIN_SEEDS_CSV="$2"; shift 2 ;;
+    --data-seed)
+      DATA_SEED="$2"; shift 2 ;;
+    --autoenc-seed)
+      AUTOENC_SEED="$2"; shift 2 ;;
     --da-values)
       DA_VALUES_CSV="$2"; shift 2 ;;
     --treatment-types)
@@ -87,7 +90,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-IFS=',' read -r -a SEEDS <<< "${SEEDS_CSV}"
+IFS=',' read -r -a TRAIN_SEEDS <<< "${TRAIN_SEEDS_CSV}"
 IFS=',' read -r -a TREATMENT_TYPES <<< "${TREATMENT_TYPES_CSV}"
 IFS=',' read -r -a REQUESTED_SURFACES <<< "${SURFACES_CSV}"
 IFS=',' read -r -a DA_VALUES <<< "${DA_VALUES_CSV}"
@@ -95,7 +98,7 @@ IFS=',' read -r -a GPU_IDS <<< "${GPU_IDS_CSV}"
 
 get_surfaces_for_type() {
   case "$1" in
-    continuous) echo "poly varying_slope soft_threshold bump_local" ;;
+    continuous) echo "poly varying_slope soft_threshold sinusoidal" ;;
     binary)     echo "binary_linear binary_threshold_modulated" ;;
     *)          echo "" ;;
   esac
@@ -105,7 +108,7 @@ surface_allowed_for_type() {
   local treatment_type="$1"
   local surface="$2"
   case "${treatment_type}:${surface}" in
-    continuous:poly|continuous:varying_slope|continuous:soft_threshold|continuous:bump_local) return 0 ;;
+    continuous:poly|continuous:varying_slope|continuous:soft_threshold|continuous:sinusoidal) return 0 ;;
     binary:binary_linear|binary:binary_threshold_modulated) return 0 ;;
     *) return 1 ;;
   esac
@@ -145,8 +148,7 @@ LOCK_FILE="$(mktemp "${TMPDIR:-/tmp}/run_ibm_lock.XXXXXX")"
 cleanup() { rm -f "${JOB_FILE}" "${LOCK_FILE}"; }
 trap cleanup EXIT
 
-for seed in "${SEEDS[@]}"; do
-  autoenc_seed=$((seed + AUTOENC_SEED_OFFSET))
+for train_seed in "${TRAIN_SEEDS[@]}"; do
   for treatment_type in "${TREATMENT_TYPES[@]}"; do
     if [[ -n "${EXPLICIT_SURFACE}" ]]; then
       surfaces=("${EXPLICIT_SURFACE}")
@@ -162,7 +164,7 @@ for seed in "${SEEDS[@]}"; do
     fi
     for surface in "${surfaces[@]}"; do
       for dA in "${DA_VALUES[@]}"; do
-        printf '%s %s %s %s %s\n' "${treatment_type}" "${surface}" "${dA}" "${seed}" "${autoenc_seed}" >> "${JOB_FILE}"
+        printf '%s %s %s %s\n' "${treatment_type}" "${surface}" "${dA}" "${train_seed}" >> "${JOB_FILE}"
       done
     done
   done
@@ -192,7 +194,7 @@ PY
 
 run_worker() {
   local gpu_id="${1:-}"
-  local job treatment_type surface dA seed autoenc_seed log_path da_tag
+  local job treatment_type surface dA train_seed log_path da_tag
 
   while true; do
     job="$(pop_next_job)"
@@ -201,17 +203,17 @@ run_worker() {
       break
     fi
 
-    read -r treatment_type surface dA seed autoenc_seed <<< "${job}"
+    read -r treatment_type surface dA train_seed <<< "${job}"
     da_tag="$( [[ "${dA}" -gt 1 ]] && echo "_dA${dA}" || echo "" )"
-    log_path="${LOG_DIR}/run_ibm_${treatment_type}_${surface}${da_tag}_data${seed}_ae${autoenc_seed}.log"
-    echo "=== worker device=${DEVICE}${gpu_id:+ gpu=${gpu_id}}: treatment=${treatment_type} surface=${surface} dA=${dA} data_seed=${seed} autoenc_seed=${autoenc_seed} -> ${log_path}"
+    log_path="${LOG_DIR}/run_ibm_${treatment_type}_${surface}${da_tag}_data${DATA_SEED}_ae${AUTOENC_SEED}_train${train_seed}.log"
+    echo "=== worker device=${DEVICE}${gpu_id:+ gpu=${gpu_id}}: treatment=${treatment_type} surface=${surface} dA=${dA} data_seed=${DATA_SEED} autoenc_seed=${AUTOENC_SEED} train_seed=${train_seed} -> ${log_path}"
 
     local base_args=(
       "--treatment-type" "${treatment_type}"
       "--design-seed" "${DESIGN_SEED}"
-      "--data-seed" "${seed}"
-      "--autoenc-seed" "${autoenc_seed}"
-      "--train-seed" "${seed}"
+      "--data-seed" "${DATA_SEED}"
+      "--autoenc-seed" "${AUTOENC_SEED}"
+      "--train-seed" "${train_seed}"
       "--dA" "${dA}"
       "--checkpoint-dir" "${CHECKPOINT_DIR}"
     )

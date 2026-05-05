@@ -463,6 +463,7 @@ def residualize_against_mlp(
     hidden_dim: int,
     depth: int,
     device: torch.device,
+    label: str = "D residualizer",
 ) -> np.ndarray:
     """Return residuals from an MLP projection of D on covariates."""
     torch.manual_seed(int(seed))
@@ -499,7 +500,7 @@ def residualize_against_mlp(
             total += float(loss.detach().cpu()) * xb.shape[0]
         last_loss = total / len(dataset)
         if ep == 1 or ep == int(epochs) or ep % log_every == 0:
-            print(f"  [D residualizer] epoch {ep:3d}/{int(epochs)}  mse={last_loss:.4f}")
+            print(f"  [{label}] epoch {ep:3d}/{int(epochs)}  mse={last_loss:.4f}")
 
     model.eval()
     preds: list[np.ndarray] = []
@@ -603,9 +604,31 @@ def simulate_ibm_dataset(
 ) -> IBMSimulatedDataset:
     rng = np.random.default_rng(int(data_seed))
     U = rng.normal(size=(cfg.n, cfg.dA if cfg.dA > 1 else 1))
+    # Column-wise z-score C so scales match residualized/z-scored V and D_residualized.
+    C = np.asarray(C, dtype=float)
+    C = (C - C.mean(axis=0, keepdims=True)) / (C.std(axis=0, keepdims=True) + 1e-6)
+
+    # Deconfound V from C and observed L.
+    v_resid_cov = np.concatenate([C, L], axis=1)
+    V_deconf = residualize_against_mlp(
+        V,
+        v_resid_cov,
+        seed=int(residualizer_seed) + 7919,
+        epochs=max(40, int(residualizer_epochs) // 2),
+        batch_size=int(residualizer_batch_size),
+        lr=float(residualizer_lr),
+        hidden_dim=int(residualizer_hidden_dim),
+        depth=int(residualizer_depth),
+        device=device,
+        label="V deconfounder",
+    )
+    V_deconf = (V_deconf - V_deconf.mean(axis=0, keepdims=True)) / (
+        V_deconf.std(axis=0, keepdims=True) + 1e-6
+    )
+
     D_resid = residualize_against_mlp(
         D,
-        np.concatenate([C, V, L], axis=1),
+        np.concatenate([C, V_deconf, L], axis=1),
         seed=int(residualizer_seed),
         epochs=int(residualizer_epochs),
         batch_size=int(residualizer_batch_size),
@@ -613,12 +636,13 @@ def simulate_ibm_dataset(
         hidden_dim=int(residualizer_hidden_dim),
         depth=int(residualizer_depth),
         device=device,
+        label="D residualizer",
     )
     D_resid = (D_resid - D_resid.mean(axis=0, keepdims=True)) / (D_resid.std(axis=0, keepdims=True) + 1e-6)
 
-    X = mix_source(C, V, D, dgp.mixing)
+    X = mix_source(C, V_deconf, D, dgp.mixing)
     M = sample_proxy_measurements(C, rng, dgp, cfg)
-    A = sample_treatment(C, V, L, U, rng, dgp, cfg)
+    A = sample_treatment(C, V_deconf, L, U, rng, dgp, cfg)
     Y, response_signal_obs, _, structural_noise_obs = sample_outcome(A, C, D_resid, U, L, rng, dgp, cfg)
     nuisance_signal_obs = confounder_nuisance(C, dgp)
     U_out = U if cfg.dA > 1 else U.reshape(-1)
@@ -629,7 +653,7 @@ def simulate_ibm_dataset(
         A=A,
         Y=Y,
         C=C,
-        V=V,
+        V=V_deconf,
         D=D,
         U=U_out,
         structural_response_obs=response_signal_obs,

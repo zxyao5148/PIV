@@ -181,7 +181,7 @@ def build_npiv_checkpoint_path(
     """Canonical NPIV checkpoint path for one `(seed, rho, method, downstream)`."""
     if ckpt_root is None:
         return None
-    oracle_suffix = "_orc" if oracle_c and method not in {"PIV", "Proxy-Orth"} else ""
+    oracle_suffix = "_orc" if oracle_c and method not in {"PIV"} else ""
     return (
         ckpt_root
         / f"s{seed}_rho{rho_tag(rho)}_{method_tag(method)}_{downstream}{oracle_suffix}_npiv.pt"

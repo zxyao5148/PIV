@@ -55,7 +55,7 @@ scalar:
       dfiv_batch_size: 0
       dfiv_weight_decay: 0.00001
       dfiv_patience: 80
-    bump_local:
+    sinusoidal:
       dfiv_epochs: 360
       dfiv_feature_dim: 64
       dfiv_psi_hidden: 192
@@ -146,7 +146,7 @@ vector:
       dfiv_batch_size: 512
       dfiv_weight_decay: 0.00001
       dfiv_patience: 80
-    bump_local:
+    sinusoidal:
       dfiv_epochs: 320
       dfiv_feature_dim: 64
       dfiv_psi_hidden: 192

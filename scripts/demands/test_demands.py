@@ -285,7 +285,7 @@ def evaluate_seed_checkpoint_bundle(
             allow_train=False,
             fingerprint_extra=fp_extra,
         )
-        if args.oracle_c and method not in {"PIV", "Proxy-Orth"}:
+        if args.oracle_c and method not in {"PIV"}:
             assert (
                 oracle_c_tr is not None
                 and oracle_c_va is not None

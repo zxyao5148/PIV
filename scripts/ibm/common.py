@@ -70,6 +70,7 @@ def attach_ibm_fingerprint_compat(args: argparse.Namespace) -> None:
 def ibm_fingerprint_extra(args: argparse.Namespace) -> dict:
     """Dataset-specific fingerprint fields for IBM/LBIDD checkpoints."""
     return {
+        "surface": str(args.surface),
         "design_seed": int(args.design_seed),
         "data_seed": int(args.data_seed),
         "autoenc_seed": int(args.autoenc_seed),
@@ -279,7 +280,7 @@ def build_npiv_checkpoint_path(
     """Canonical NPIV checkpoint path for one IBM semi-synthetic run."""
     if ckpt_root is None:
         return None
-    oracle_suffix = "_oracleC" if oracle_c and method not in {"PIV", "Proxy-Orth"} else ""
+    oracle_suffix = "_oracleC" if oracle_c and method not in {"PIV"} else ""
     da_suffix = f"_dA{int(dA)}" if int(dA) > 1 else ""
     return (
         ckpt_root

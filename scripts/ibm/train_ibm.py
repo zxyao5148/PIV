@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="poly",
         choices=[
-            "poly", "varying_slope", "soft_threshold", "bump_local",
+            "poly", "varying_slope", "soft_threshold", "sinusoidal",
             "binary_linear", "binary_threshold_modulated",
         ],
     )
@@ -189,7 +189,7 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         dest="oracle_c",
-        help="Use oracle C as W for methods without a learned W branch (default: on).",
+        help="Replace learned W with oracle C except for PIV (default: on).",
     )
     parser.add_argument("--force-retrain", action="store_true", dest="force_retrain")
     return parser.parse_args()
@@ -297,7 +297,7 @@ def main() -> None:
             fingerprint_extra=fp_extra,
         )
 
-        if args.oracle_c and method not in {"PIV", "Proxy-Orth"}:
+        if args.oracle_c and method not in {"PIV"}:
             assert oracle_c_tr is not None
             w_tr = oracle_c_tr
             w_va = oracle_c_va
@@ -314,6 +314,7 @@ def main() -> None:
             ("Z->V", probe_z_to_target_r2, probe_train["V"], probe_test["V"]),
             ("Z->D", probe_z_to_target_r2, probe_train["D"], probe_test["D"]),
             ("(W,Z)->V", probe_wz_to_target_r2, probe_train["V"], probe_test["V"]),
+            ("(W,Z)->D", probe_wz_to_target_r2, probe_train["D"], probe_test["D"]),
         ]
         for label, probe_fn, tgt_tr_raw, tgt_te_raw in probe_specs:
             tgt_tr = tgt_tr_raw.to(torch.float32)
@@ -430,7 +431,8 @@ def main() -> None:
             f"W->D={probe_by_method[(method, 'W->D')]:.4f}  "
             f"Z->V={probe_by_method[(method, 'Z->V')]:.4f}  "
             f"Z->D={probe_by_method[(method, 'Z->D')]:.4f}  "
-            f"(W,Z)->V={probe_by_method[(method, '(W,Z)->V')]:.4f}",
+            f"(W,Z)->V={probe_by_method[(method, '(W,Z)->V')]:.4f}  "
+            f"(W,Z)->D={probe_by_method[(method, '(W,Z)->D')]:.4f}",
         )
         if not bool(args.skip_downstream):
             for downstream in list(dict.fromkeys(args.downstream)):

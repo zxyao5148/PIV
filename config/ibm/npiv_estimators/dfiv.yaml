@@ -37,8 +37,18 @@ scalar:
       dfiv_patience: 60
   surfaces:
     poly:
-      dfiv_epochs: 300
-      dfiv_patience: 60
+      dfiv_epochs: 360
+      dfiv_feature_dim: 64
+      dfiv_psi_hidden: 192
+      dfiv_phi_hidden: 128
+      dfiv_xi_hidden: 192
+      dfiv_lambda1: 0.02
+      dfiv_lambda2: 0.02
+      dfiv_lr: 0.0008
+      dfiv_lr_phi: 0.0003
+      dfiv_batch_size: 0
+      dfiv_weight_decay: 0.00001
+      dfiv_patience: 80
     varying_slope:
       dfiv_epochs: 300
       dfiv_patience: 60
@@ -55,7 +65,7 @@ scalar:
       dfiv_batch_size: 0
       dfiv_weight_decay: 0.00001
       dfiv_patience: 80
-    bump_local:
+    sinusoidal:
       dfiv_epochs: 360
       dfiv_feature_dim: 64
       dfiv_psi_hidden: 192
@@ -146,7 +156,7 @@ vector:
       dfiv_batch_size: 512
       dfiv_weight_decay: 0.00001
       dfiv_patience: 80
-    bump_local:
+    sinusoidal:
       dfiv_epochs: 320
       dfiv_feature_dim: 64
       dfiv_psi_hidden: 192
@@ -160,18 +170,19 @@ vector:
       dfiv_weight_decay: 0.00001
       dfiv_patience: 80
     binary_linear:
-      dfiv_epochs: 180
+      dfiv_epochs: 220
       dfiv_feature_dim: 64
       dfiv_psi_hidden: 192
       dfiv_phi_hidden: 128
       dfiv_xi_hidden: 192
-      dfiv_lambda1: 0.03
-      dfiv_lambda2: 0.03
-      dfiv_lr: 0.0003
-      dfiv_lr_phi: 0.00008
-      dfiv_batch_size: 0
-      dfiv_weight_decay: 0.0001
-      dfiv_patience: 55
+      dfiv_activation: tanh
+      dfiv_lambda1: 0.01
+      dfiv_lambda2: 0.01
+      dfiv_lr: 0.0005
+      dfiv_lr_phi: 0.0002
+      dfiv_batch_size: 256
+      dfiv_weight_decay: 0.00005
+      dfiv_patience: 60
     binary_threshold_modulated:
       dfiv_epochs: 220
       dfiv_feature_dim: 64

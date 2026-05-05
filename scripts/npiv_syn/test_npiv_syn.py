@@ -340,7 +340,7 @@ def evaluate_train_seed_bundle(
             allow_train=False, fingerprint_extra=fp_extra,
         )
 
-        if args.oracle_c and method not in {"PIV", "Proxy-Orth"}:
+        if args.oracle_c and method not in {"PIV"}:
             assert oracle_c_tr is not None
             w_tr = oracle_c_tr
             w_va = oracle_c_va

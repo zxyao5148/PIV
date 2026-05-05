@@ -50,6 +50,7 @@ from utils import (
     extract_wz,
     fingerprint_iv,
     fingerprint_npiv,
+    iv_fingerprint_equal,
     load_checkpoint,
     load_npiv_norms,
     make_eval_loaders,
@@ -1533,7 +1534,8 @@ def load_iv_representation(
     ckpt = load_checkpoint(path)
     if ckpt.get("method") != method:
         raise ValueError(f"checkpoint method {ckpt.get('method')!r} != {method!r}")
-    if ckpt.get("fingerprint") != fingerprint_iv(args, seed, extra=fingerprint_extra):
+    want_fp = fingerprint_iv(args, seed, extra=fingerprint_extra)
+    if not iv_fingerprint_equal(ckpt.get("fingerprint"), want_fp):
         raise ValueError("IV checkpoint fingerprint mismatch")
 
     eval_ld = (

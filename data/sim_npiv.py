@@ -42,14 +42,14 @@ ContinuousSurfaceType = Literal[
     "poly",
     "varying_slope",
     "soft_threshold",
-    "bump_local",
+    "sinusoidal",
 ]
 BinarySurfaceType = Literal["binary_linear", "binary_threshold_modulated"]
 SurfaceType = Literal[
     "poly",
     "varying_slope",
     "soft_threshold",
-    "bump_local",
+    "sinusoidal",
     "binary_linear",
     "binary_threshold_modulated",
 ]
@@ -58,7 +58,7 @@ CONTINUOUS_SURFACES = [
     "poly",
     "varying_slope",
     "soft_threshold",
-    "bump_local",
+    "sinusoidal",
 ]
 BINARY_SURFACES = ["binary_linear", "binary_threshold_modulated"]
 ALL_SURFACES = CONTINUOUS_SURFACES + BINARY_SURFACES
@@ -70,7 +70,7 @@ SURFACE_CODE: Dict[str, int] = {
     "binary_linear": 4,
     "binary_threshold_modulated": 5,
     "soft_threshold": 7,
-    "bump_local": 9,
+    "sinusoidal": 9,
 }
 
 
@@ -148,11 +148,13 @@ class SimConfig:
     soft_threshold_k_range: tuple[float, float] = (1.5, 4.0)
     soft_threshold_c0_range: tuple[float, float] = (-0.4, 0.4)
     soft_threshold_cL_range: tuple[float, float] = (-0.8, 0.8)
-    bump_local_tau0_range: tuple[float, float] = (1.0, 2.5)
-    bump_local_tauL_range: tuple[float, float] = (-1.0, 1.0)
-    bump_local_c0_range: tuple[float, float] = (-0.5, 0.5)
-    bump_local_cL_range: tuple[float, float] = (-0.8, 0.8)
-    bump_local_s_range: tuple[float, float] = (0.35, 1.00)
+    sinus_tau0_range: tuple[float, float] = (0.6, 1.4)
+    sinus_tauL_range: tuple[float, float] = (-0.5, 0.5)
+    sinus_omega_range: tuple[float, float] = (0.6, 1.2)
+    sinus_phase0_range: tuple[float, float] = (-0.5, 0.5)
+    sinus_phaseL_range: tuple[float, float] = (-0.4, 0.4)
+    sinus_lin0_range: tuple[float, float] = (0.8, 1.6)
+    sinus_linL_range: tuple[float, float] = (-0.3, 0.3)
 
     binary_tau0_range: tuple[float, float] = (0.5, 2.0)
     binary_tauL_range: tuple[float, float] = (-1.0, 1.0)
@@ -772,22 +774,28 @@ def sample_outcome_theta(rng: Generator, surface: SurfaceType, treatment_type: T
                     "cL": _uniform_vec(rng, (cfg.dA, cfg.dL), *cfg.soft_threshold_cL_range),
                     "scale": 1.0 / math.sqrt(float(cfg.dA)),
                 }
-        elif surface == "bump_local":
+        elif surface == "sinusoidal":
             if cfg.dA == 1:
                 params = {
-                    "tau0": _scalar_uniform(rng, *cfg.bump_local_tau0_range),
-                    "tauL": _uniform_vec(rng, (cfg.dL,), *cfg.bump_local_tauL_range),
-                    "c0": _scalar_uniform(rng, *cfg.bump_local_c0_range),
-                    "cL": _uniform_vec(rng, (cfg.dL,), *cfg.bump_local_cL_range),
-                    "s": _scalar_uniform(rng, *cfg.bump_local_s_range),
+                    "lin0": _scalar_uniform(rng, *cfg.sinus_lin0_range),
+                    "linL": _uniform_vec(rng, (cfg.dL,), *cfg.sinus_linL_range),
+                    "tau0": _scalar_uniform(rng, 0.2, 0.6),
+                    "tauL": _uniform_vec(rng, (cfg.dL,), *cfg.sinus_tauL_range),
+                    "omega0": _scalar_uniform(rng, 0.4, 0.9),
+                    "omegaL": _uniform_vec(rng, (cfg.dL,), -0.15, 0.15),
+                    "phase0": _scalar_uniform(rng, *cfg.sinus_phase0_range),
+                    "phaseL": _uniform_vec(rng, (cfg.dL,), -0.25, 0.25),
                 }
             else:
                 params = {
-                    "tau0": _uniform_vec(rng, (cfg.dA,), *cfg.bump_local_tau0_range),
-                    "tauL": _uniform_vec(rng, (cfg.dA, cfg.dL), *cfg.bump_local_tauL_range),
-                    "c0": _uniform_vec(rng, (cfg.dA,), *cfg.bump_local_c0_range),
-                    "cL": _uniform_vec(rng, (cfg.dA, cfg.dL), *cfg.bump_local_cL_range),
-                    "s": _uniform_vec(rng, (cfg.dA,), *cfg.bump_local_s_range),
+                    "lin0": _uniform_vec(rng, (cfg.dA,), *cfg.sinus_lin0_range),
+                    "linL": _uniform_vec(rng, (cfg.dA, cfg.dL), *cfg.sinus_linL_range),
+                    "tau0": _uniform_vec(rng, (cfg.dA,), 0.2, 0.6),
+                    "tauL": _uniform_vec(rng, (cfg.dA, cfg.dL), *cfg.sinus_tauL_range),
+                    "omega0": _uniform_vec(rng, (cfg.dA,), 0.4, 0.9),
+                    "omegaL": _uniform_vec(rng, (cfg.dA, cfg.dL), -0.15, 0.15),
+                    "phase0": _uniform_vec(rng, (cfg.dA,), *cfg.sinus_phase0_range),
+                    "phaseL": _uniform_vec(rng, (cfg.dA, cfg.dL), -0.25, 0.25),
                     "scale": 1.0 / math.sqrt(float(cfg.dA)),
                 }
         else:
@@ -969,26 +977,34 @@ def structural_response(A: np.ndarray | float, L: np.ndarray, dgp: DGPDefinition
                 c_loc = c0[None, :] + L @ cL.T
                 soft_hinge = _softplus_np(k[None, :] * (A_arr - c_loc)) / np.maximum(k[None, :], 1e-8)
                 val = baseline_response + scale * np.sum(tau * soft_hinge, axis=1, keepdims=True)
-        elif outcome_theta.surface == "bump_local":
+        elif outcome_theta.surface == "sinusoidal":
             if A_arr.shape[1] == 1:
+                lin = float(outcome_theta.params["lin0"]) + L @ np.asarray(outcome_theta.params["linL"], dtype=float)[:, None]
                 tau = float(outcome_theta.params["tau0"]) + L @ np.asarray(outcome_theta.params["tauL"], dtype=float)[:, None]
-                c_loc = float(outcome_theta.params["c0"]) + L @ np.asarray(outcome_theta.params["cL"], dtype=float)[:, None]
-                s = max(float(outcome_theta.params["s"]), 1e-6)
-                z = (A_arr - c_loc) / s
-                bump = np.exp(-0.5 * (z ** 2))
-                val = baseline_response + tau * bump
+                omega = float(outcome_theta.params["omega0"]) + L @ np.asarray(outcome_theta.params["omegaL"], dtype=float)[:, None]
+                omega = np.maximum(omega, 0.25)
+                phase = float(outcome_theta.params["phase0"]) + L @ np.asarray(outcome_theta.params["phaseL"], dtype=float)[:, None]
+                val = baseline_response + lin * A_arr + tau * np.sin(omega * A_arr + phase)
             else:
+                lin0 = np.asarray(outcome_theta.params["lin0"], dtype=float)
+                linL = np.asarray(outcome_theta.params["linL"], dtype=float)
                 tau0 = np.asarray(outcome_theta.params["tau0"], dtype=float)
                 tauL = np.asarray(outcome_theta.params["tauL"], dtype=float)
-                c0 = np.asarray(outcome_theta.params["c0"], dtype=float)
-                cL = np.asarray(outcome_theta.params["cL"], dtype=float)
-                s = np.maximum(np.asarray(outcome_theta.params["s"], dtype=float), 1e-6)
+                omega0 = np.asarray(outcome_theta.params["omega0"], dtype=float)
+                omegaL = np.asarray(outcome_theta.params["omegaL"], dtype=float)
+                phase0 = np.asarray(outcome_theta.params["phase0"], dtype=float)
+                phaseL = np.asarray(outcome_theta.params["phaseL"], dtype=float)
                 scale = float(outcome_theta.params["scale"])
+                lin = lin0[None, :] + L @ linL.T
                 tau = tau0[None, :] + L @ tauL.T
-                c_loc = c0[None, :] + L @ cL.T
-                z = (A_arr - c_loc) / s[None, :]
-                bump = np.exp(-0.5 * (z ** 2))
-                val = baseline_response + scale * np.sum(tau * bump, axis=1, keepdims=True)
+                omega = omega0[None, :] + L @ omegaL.T
+                omega = np.maximum(omega, 0.25)
+                phase = phase0[None, :] + L @ phaseL.T
+                val = baseline_response + scale * np.sum(
+                    lin * A_arr + tau * np.sin(omega * A_arr + phase),
+                    axis=1,
+                    keepdims=True,
+                )
         else:
             raise ValueError(f"Unknown continuous surface family: {outcome_theta.surface}")
     else:

@@ -50,7 +50,7 @@ scalar:
       deepiv_weight_decay: 0.0002
       deepiv_min_scale: 0.01
       deepiv_patience: 70
-    bump_local:
+    sinusoidal:
       deepiv_epochs: 260
       deepiv_treatment_hidden: 128
       deepiv_response_hidden: 320
@@ -128,7 +128,7 @@ vector:
       deepiv_weight_decay: 0.0002
       deepiv_min_scale: 0.01
       deepiv_patience: 80
-    bump_local:
+    sinusoidal:
       deepiv_epochs: 420
       deepiv_treatment_hidden: 256
       deepiv_response_hidden: 512

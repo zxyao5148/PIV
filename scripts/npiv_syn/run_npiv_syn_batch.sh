@@ -90,7 +90,7 @@ IFS=',' read -r -a GPU_IDS <<< "${GPU_IDS_CSV}"
 
 get_surfaces_for_type() {
   case "$1" in
-    continuous) echo "poly varying_slope soft_threshold bump_local" ;;
+    continuous) echo "poly varying_slope soft_threshold sinusoidal" ;;
     binary)     echo "binary_linear binary_threshold_modulated" ;;
     *)          echo "" ;;
   esac
@@ -100,7 +100,7 @@ surface_allowed_for_type() {
   local treatment_type="$1"
   local surface="$2"
   case "${treatment_type}:${surface}" in
-    continuous:poly|continuous:varying_slope|continuous:soft_threshold|continuous:bump_local) return 0 ;;
+    continuous:poly|continuous:varying_slope|continuous:soft_threshold|continuous:sinusoidal) return 0 ;;
     binary:binary_linear|binary:binary_threshold_modulated) return 0 ;;
     *) return 1 ;;
   esac
