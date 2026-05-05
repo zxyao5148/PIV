@@ -1,4 +1,4 @@
-"""Deep Feature IV (DFIV; Xu et al. 2021) — treatment-type-agnostic.
+"""Deep Feature IV (DFIV; Xu et al. 2021).
 
 Supports all four treatment types:
 
@@ -24,11 +24,6 @@ such that
 
 by minimising a ridge-regularised squared loss (closed form per batch).
 
-Unlike the ZNet reference (``ZNet/models/treatment_effect_estimators/
-df_iv.py``), which models binary-scalar treatment by concatenating a
-``{0,1}`` indicator on the input, here ``φ`` is a generic MLP over
-``a_dim``-dimensional ``A`` so scalar/vector × continuous/binary all
-share the same code path.
 """
 from __future__ import annotations
 

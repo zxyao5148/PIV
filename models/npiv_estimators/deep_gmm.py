@@ -1,7 +1,5 @@
 """DeepGMM with radial test functions for NPIV.
 
-This variant matches the older demands checkpoints in this repository:
-
 * ``modeler`` — structural MLP ``g(A, W, L) -> Y``
 * ``critics`` — bank of Gaussian radial basis test functions over
   ``(Z, W, L)``, each with a learnable centre and bandwidth

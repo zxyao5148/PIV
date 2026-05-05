@@ -1,9 +1,7 @@
-"""Shared utilities for the ICA-IV codebase.
+"""Shared utilities for the codebase.
 
 Small, reusable helpers consumed by :mod:`trainer`, :mod:`evaluation`, and the
-scripts under ``scripts/``.  Nothing here runs an optimisation loop or owns a
-top-level training/evaluation workflow; those live in :mod:`trainer` and
-:mod:`evaluation`.
+scripts under ``scripts/``. 
 
 Sections:
 

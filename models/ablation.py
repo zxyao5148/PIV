@@ -1,4 +1,4 @@
-"""Ablation model for Proxy IV (PIV): Proxy-Orth (orthogonalisation only).
+"""Ablation model for PIV: Proxy-Orth (orthogonalisation only).
 
 **Sequential training.**
 

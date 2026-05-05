@@ -1,27 +1,6 @@
 """
-sim_npiv_with_vector_binary_coordU_joint_overlap.py
-
 Synthetic NPIV benchmark simulator for scalar/vector continuous treatment and
 scalar/vector binary treatment.
-
-This version adds a vector-binary joint-cell positivity / overlap diagnostic and
-optional accept-reject filter. For dA=2, the check is based on oracle
-conditional probabilities for all four treatment cells:
-
-    P(A = 00 | V, C, L), P(A = 01 | V, C, L),
-    P(A = 10 | V, C, L), P(A = 11 | V, C, L).
-
-For vector binary treatment, the observable first-stage probability integrates
-out the hidden coordinate-wise U and the binary threshold noise eps:
-
-    A_j = 1[index_j(V,C,L) + gamma_j U_j + eps_j >= 0]
-
-with U_j ~ N(0,1), eps_j ~ N(0,1), giving
-
-    P(A_j = 1 | V,C,L) = Phi(index_j / sqrt(1 + gamma_j^2)).
-
-This is a finite-sample positivity / overlap check. It is stricter than checking
-only marginal treated rates or empirical pattern counts.
 """
 
 from __future__ import annotations

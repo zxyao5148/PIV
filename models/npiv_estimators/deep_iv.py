@@ -1,4 +1,4 @@
-"""DeepIV (Hartford et al. 2017) — treatment-type-agnostic implementation.
+"""DeepIV (Hartford et al. 2017).
 
 Supports all four treatment types:
 
@@ -22,9 +22,6 @@ via:
   and ``2^a_dim ≤ 256``  (zero Monte-Carlo variance);
 * **Monte-Carlo integration** with ``num_samples`` treatment draws otherwise.
 
-The design adapts the ZNet reference (``ZNet/models/treatment_effect_estimators/
-deep_iv.py``) — which is binary-scalar-only — to cover all four treatment
-types in a single class.
 """
 from __future__ import annotations
 

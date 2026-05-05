@@ -1,7 +1,5 @@
 """Shared evaluation utilities.
 
-Two complementary groups live here:
-
 1. **NPIV counterfactual contrasts.** Given a trained NPIV model ``ĥ`` and its
    normalisation stats ``norms`` (as produced by ``trainer.train_deepiv`` /
    ``trainer.train_dfiv``), evaluate the per-unit treatment contrast
@@ -15,8 +13,7 @@ Two complementary groups live here:
    structural-response callable.
 
 2. **Representation probes.** Fit a small MLP probe from a representation
-   ``(W, Z)`` or ``Z`` alone to the latent confounder ``V`` and report the
-   coefficient of determination on held-out data. Used by ``run_geom_v.py``.
+   ``(W, Z)`` or ``Z`` alone to the latent confounder ``V``.
 """
 from __future__ import annotations
 

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Single-run demands benchmark.
-"""
+"""Train IV-representation models + NPIV estimators on demands benchmark."""
 from __future__ import annotations
 
 import argparse
@@ -10,12 +9,18 @@ from pathlib import Path
 import numpy as np
 import torch
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.model_configs import add_model_config_arguments, configured_model_args
+from data.sim_demands import (
+    DemandsConfig,
+    simulate_demands,
+    structural_response_demands,
+)
 from evaluation import (
+    build_counterfactual_eval,
     contrast_error,
     contrast_metric_label,
     hat_contrast_matrix,
@@ -24,21 +29,226 @@ from evaluation import (
     probe_z_to_target_r2,
     true_contrast_matrix,
 )
-from trainer import fit_npiv
-from utils import collect_loader, seed_everything
+from synthetic_dataset import make_synthetic_proxyiv_dataloaders
+from trainer import fit_npiv, load_iv_representation, train_iv_representation
+from utils import IVDims, collect_loader, make_eval_loaders, method_tag, seed_everything
 
-from scripts.demands.common import (
-    ALL_METHODS,
-    DEMANDS_DIMS,
-    PROJECT_ROOT,
-    build_demands_loaders,
-    build_eval_setup,
-    build_iv_checkpoint_path,
-    build_npiv_checkpoint_path,
-    demands_fingerprint_extra,
-    demands_h0,
-    load_or_train_iv,
-)
+DEMANDS_DIMS = IVDims(x_dim=3, m_dim=1, w_dim=1, z_dim=1, a_dim=1, l_dim=2, y_dim=1)
+ALL_METHODS = [
+    "PIV",
+    "Proxy-Orth",
+    "ZNet",
+    "AutoIV",
+    "VIV",
+    "DIV.VAE",
+    "TrueIV",
+    "NoneIV",
+]
+
+
+def demands_h0(a: np.ndarray, l: np.ndarray) -> np.ndarray:
+    """Demands structural response adapter: ``h0(a, L=[L1, L2])``."""
+    return structural_response_demands(
+        np.asarray(a, dtype=np.float32),
+        np.asarray(l[:, 0], dtype=np.float32),
+        np.asarray(l[:, 1], dtype=np.float32),
+    ).astype(np.float64).ravel()
+
+
+def rho_tag(rho: float) -> str:
+    """Filesystem-friendly rho token."""
+    return f"{rho:g}".replace("-", "m").replace(".", "p")
+
+
+def build_eval_setup(
+    args: argparse.Namespace,
+    rho: float,
+    *,
+    include_surface: bool,
+) -> dict[str, object]:
+    """Build the shared evaluation geometry for one rho."""
+    if include_surface:
+        raise ValueError("surface evaluation is only available in the removed test script")
+
+    pop_cfg = DemandsConfig(
+        n=int(args.pop_n),
+        seed=int(args.pop_seed),
+        rho=float(rho),
+        coef_eps_a=float(args.coef_eps_a),
+        coef_u_outcome=float(args.coef_u_outcome),
+        coef_v_treatment=float(getattr(args, "coef_v_treatment", 1.0)),
+        coef_c_treatment=float(getattr(args, "coef_c_treatment", 1.0)),
+        coef_c_outcome=float(getattr(args, "coef_c_outcome", 1.0)),
+        coef_d_outcome=float(getattr(args, "coef_d_outcome", 1.0)),
+    )
+    pop_raw = simulate_demands(pop_cfg)
+    a_pop = np.asarray(pop_raw["A"], dtype=np.float64).reshape(-1)
+    l_pop = np.asarray(pop_raw["L"], dtype=np.float64)
+
+    override_str = str(args.contrast_ref_a).strip()
+    a_ref_override = float(override_str) if override_str else None
+    a_ref, a_grid, tau_pop_true = build_counterfactual_eval(
+        a_pop,
+        l_pop,
+        demands_h0,
+        a_ref_override=a_ref_override,
+        cf_a_pctl_low=float(args.cf_a_pctl_low),
+        cf_a_pctl_high=float(args.cf_a_pctl_high),
+        cf_grid_n=int(args.cf_grid_n),
+    )
+    return {
+        "a_ref": float(a_ref),
+        "a_grid": a_grid,
+        "tau_pop_true": tau_pop_true,
+    }
+
+
+def build_demands_loaders(
+    args: argparse.Namespace,
+    *,
+    seed: int,
+    rho: float,
+) -> tuple[dict[str, np.ndarray], object, object]:
+    """Simulate one demands dataset and build train/test loaders."""
+    cfg = DemandsConfig(
+        n=int(args.n),
+        seed=int(seed),
+        rho=float(rho),
+        coef_eps_a=float(args.coef_eps_a),
+        coef_u_outcome=float(args.coef_u_outcome),
+        coef_v_treatment=float(getattr(args, "coef_v_treatment", 1.0)),
+        coef_c_treatment=float(getattr(args, "coef_c_treatment", 1.0)),
+        coef_c_outcome=float(getattr(args, "coef_c_outcome", 1.0)),
+        coef_d_outcome=float(getattr(args, "coef_d_outcome", 1.0)),
+    )
+    raw = simulate_demands(cfg)
+    keys = ["X", "M", "A", "Y", "L", "C", "V", "D", "U"]
+    loaders = make_synthetic_proxyiv_dataloaders(
+        arrays=raw,
+        keys=keys,
+        required_keys=keys,
+        batch_size=int(args.batch_size),
+        train_frac=0.70,
+        val_frac=0.15,
+        seed=int(seed),
+    )
+    eval_loaders = make_eval_loaders(
+        loaders,
+        eval_batch_size=max(int(args.batch_size), 1024),
+    )
+    return raw, loaders, eval_loaders
+
+
+def build_iv_checkpoint_path(
+    ckpt_root: Path | None,
+    *,
+    seed: int,
+    rho: float,
+    method: str,
+) -> Path | None:
+    """Canonical IV checkpoint path for one `(seed, rho, method)`."""
+    if ckpt_root is None:
+        return None
+    return ckpt_root / f"s{seed}_rho{rho_tag(rho)}_{method_tag(method)}_iv.pt"
+
+
+def build_npiv_checkpoint_path(
+    ckpt_root: Path | None,
+    *,
+    seed: int,
+    rho: float,
+    method: str,
+    downstream: str,
+    oracle_c: bool,
+) -> Path | None:
+    """Canonical NPIV checkpoint path for one `(seed, rho, method, downstream)`."""
+    if ckpt_root is None:
+        return None
+    oracle_suffix = "_orc" if oracle_c and method not in {"PIV"} else ""
+    return (
+        ckpt_root
+        / f"s{seed}_rho{rho_tag(rho)}_{method_tag(method)}_{downstream}{oracle_suffix}_npiv.pt"
+    )
+
+
+def demands_fingerprint_extra(args: argparse.Namespace) -> dict:
+    """Dataset-specific fingerprint fields for the demands benchmark."""
+    return {
+        "seed": int(args.seed),
+        "rho": float(args.rho),
+        "coef_eps_a": float(args.coef_eps_a),
+        "coef_u_outcome": float(args.coef_u_outcome),
+        "coef_v_treatment": float(getattr(args, "coef_v_treatment", 1.0)),
+        "coef_c_treatment": float(getattr(args, "coef_c_treatment", 1.0)),
+        "coef_c_outcome": float(getattr(args, "coef_c_outcome", 1.0)),
+        "coef_d_outcome": float(getattr(args, "coef_d_outcome", 1.0)),
+    }
+
+
+def load_or_train_iv(
+    method: str,
+    iv_ckpt_path: Path | None,
+    loaders,
+    eval_loaders,
+    args: argparse.Namespace,
+    device: torch.device,
+    seed: int,
+    rng: np.random.Generator,
+    *,
+    allow_train: bool,
+    fingerprint_extra: dict | None = None,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+]:
+    """Load a matching IV checkpoint, optionally falling back to training."""
+    if iv_ckpt_path is not None and iv_ckpt_path.exists() and not args.force_retrain:
+        try:
+            w_tr, z_tr, w_va, z_va, w_te, z_te = load_iv_representation(
+                iv_ckpt_path,
+                method,
+                loaders,
+                args,
+                DEMANDS_DIMS,
+                device,
+                seed,
+                rng,
+                eval_loaders=eval_loaders,
+                fingerprint_extra=fingerprint_extra,
+            )
+            print(f"\n  [{method}] loaded IV checkpoint {iv_ckpt_path.name}")
+            return w_tr, z_tr, w_va, z_va, w_te, z_te
+        except (ValueError, KeyError, RuntimeError) as exc:
+            if not allow_train:
+                raise SystemExit(
+                    f"cannot load IV checkpoint {iv_ckpt_path}: {exc!r}",
+                ) from exc
+            print(f"\n  [{method}] IV checkpoint unusable ({exc!r}) - retraining.")
+
+    if not allow_train:
+        raise SystemExit(f"missing IV checkpoint for {method}: {iv_ckpt_path}")
+
+    print(f"\n  [{method}] training representation ...")
+    w_tr, z_tr, w_va, z_va, w_te, z_te, iv_ckpt = train_iv_representation(
+        method,
+        loaders,
+        args,
+        DEMANDS_DIMS,
+        device,
+        rng,
+        seed,
+        eval_loaders=eval_loaders,
+        fingerprint_extra=fingerprint_extra,
+    )
+    if iv_ckpt_path is not None:
+        iv_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(iv_ckpt, iv_ckpt_path)
+        print(f"  [{method}] saved IV checkpoint {iv_ckpt_path.name}")
+    return w_tr, z_tr, w_va, z_va, w_te, z_te
 
 
 def parse_args() -> argparse.Namespace:

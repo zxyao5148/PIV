@@ -15,14 +15,7 @@ TensorDict = Dict[str, Tensor]
 
 class SyntheticProxyIVDataset(Dataset):
     """
-    General in-memory dataset wrapper for synthetic Proxy-IV style data.
-
-    It is intentionally agnostic to the exact simulator. It works for both:
-    - simple geometric benchmarks with keys like {X, M, A, Y, C, V}
-    - richer synthetic SCMs with extra keys like {L, U, D, Z_true, ...}
-
-    The only hard requirement is that every provided array shares the same
-    leading dimension N.
+    General in-memory dataset wrapper for synthetic Proxy-IV data.
     """
 
     def __init__(

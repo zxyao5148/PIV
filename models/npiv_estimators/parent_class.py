@@ -4,9 +4,6 @@ Each downstream estimator in ``models.npiv_estimators`` inherits from
 :class:`NPIVEstimator` and exposes a uniform :meth:`predict` interface
 ``h(A, W, L)`` that the upstream evaluation utilities rely on.
 
-This mirrors the ZNet ``DownstreamParent`` wrapper, but kept minimal
-(just the prediction contract; training entrypoints live in
-``trainer.py`` since they need more plumbing).
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Major training logic for IV-representation + NPIV experiments.
+"""Major training logics for IV-representation + NPIV experiments.
 
 This module owns every function that actually runs an optimisation loop:
 

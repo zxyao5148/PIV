@@ -8,11 +8,8 @@ Latent variables    : C (demand-side confounder), V (fuel-price IV),
 Treatment           : A  (ticket price)
 Outcome             : Y  (airline demand)
 
-Mixed source X = (X1, X2, X3) = f(C, V, D) is a nonlinear differmorphism map:
-a triangular polynomial in (C, V, D) (mild cubic in C; linear cross-terms only)
-followed by the same fixed full-rank linear mix as historically used.  Optional
-isotropic Gaussian noise (sigma_x) may be added after f.  Proxy M is a noisy
-observation of C.
+Mixed source X = (X1, X2, X3) = f(C, V, D) is a nonlinear differmorphism map.
+Proxy M is a noisy observation of C.
 """
 from __future__ import annotations
 
@@ -122,7 +119,7 @@ def diffeomorphic_mix_demands(
 
 # ── Nonlinear oracle instruments Z = g(·) for ablations ───────────
 # Fixed polynomial maps (diffeomorphisms on their domains) used in place of
-# raw concatenations [V], [V,D], [C,V,D] in scripts/demands/train_demands.py.
+# raw concatenations [V], [V,D], [C,V,D] in scripts/train_demands.py.
 
 
 def oracle_z_nonlinear_v(V: np.ndarray) -> np.ndarray:
